@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The repository holds only the spec in `docs/spec/`. No code exists yet. `docs/spec/06-build-spec.md` is the entry point: it is self-contained, and files 01 to 05 are the reasoning behind it. Build milestone by milestone starting at M0 (the graph performance spike), and follow its section 13.
+M0 (the graph performance spike) is done. The workspace exists with both crates: the core crate has a read-only `GitRunner`, the log parser, `stream_log` and the lane layout, and the app draws the commit graph and nothing else. `PROGRESS.md` has the bench numbers and decisions. Next is M1.
 
-Update this file when the workspace exists and the commands below are confirmed to work.
+`docs/spec/06-build-spec.md` is the entry point: it is self-contained, and files 01 to 05 are the reasoning behind it. Build milestone by milestone, and follow its section 13.
 
 ## What this is
 
@@ -14,16 +14,14 @@ GitTree (working name) is a native macOS Git client in Rust, rendered with GPUI 
 
 ## Commands
 
-These are the commands the spec plans for. None can run until M0 creates the workspace.
-
 ```sh
 cargo test --workspace                       # all tests
 cargo test -p gittree-core                   # core crate only (fast, no UI build)
 cargo test -p gittree-core <test_name>       # a single test
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p gittree -- /path/to/repo        # run the app on a repository
-scripts/make-big-repo.sh                     # build the 100,000-commit test repository
+scripts/make-big-repo.sh                     # build the 100,000-commit test repository in target/big-repo
 cargo run --release -p gittree --bin bench -- <path>   # performance numbers for NFR-01
 ```
 

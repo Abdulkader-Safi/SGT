@@ -1,0 +1,18 @@
+_version: 1
+
+errors:
+  git_not_found: "Git was not found."
+  git_too_old: "This Git is too old. GitTree needs Git 2.39 or newer."
+  not_a_repository: "This folder is not a Git repository."
+  untrusted: "This repository is not trusted yet, so it cannot be changed. Trust it first."
+  index_locked: "Another Git process is using this repository. Try again in a moment."
+  conflict: "Git stopped because of conflicts. Resolve them, then continue."
+  dirty_work_tree: "Your uncommitted changes would be overwritten. Commit or stash them first."
+  non_fast_forward: "The remote has commits you do not have. Pull first, then try again."
+  auth_failed: "Sign-in failed. Check your user name, password or SSH key."
+  network: "Could not reach the remote. Check your connection and the remote URL."
+  ref_exists: "That name is already in use."
+  ref_not_found: "That branch, tag or commit does not exist."
+  patch_does_not_apply: "The file changed after this diff was made. Refresh and try again."
+  cancelled: "Cancelled."
+  other: "Git reported an error."

@@ -1,0 +1,321 @@
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use gittree_core::model::{GitVersion, Repository};
+use gittree_core::ops::setup;
+use gittree_core::store::{Persisted, Recent, Session, Settings, Store, TrustList};
+use gittree_core::{GitError, GitErrorKind, GitRunner};
+use gpui_kit::{App, AppContext, Context, EventEmitter, Task};
+
+/// The app's files as read at launch.
+pub struct Loaded {
+    pub store: Store,
+    pub settings: Settings,
+    pub session: Session,
+    pub recent: Recent,
+    pub trust: TrustList,
+}
+
+impl Loaded {
+    /// Reads every file. Call it off the UI thread.
+    pub fn read(mut store: Store) -> Self {
+        Self {
+            settings: store.load(),
+            session: store.load(),
+            recent: store.load(),
+            trust: store.load(),
+            store,
+        }
+    }
+}
+
+pub enum GitCheck {
+    Checking,
+    Ready(GitVersion),
+    /// `GitNotFound` or `GitTooOld`.
+    Failed(GitError),
+}
+
+/// The open repository. M2 replaces this with `RepoState`.
+pub struct OpenRepo {
+    pub repository: Repository,
+    pub runner: GitRunner,
+}
+
+pub enum AppEvent {
+    /// A Git call failed and the user should hear about it.
+    Error(GitError),
+    /// The folder the user chose is not a repository.
+    NotARepository(PathBuf),
+}
+
+type SaveJob = Box<dyn FnOnce(&Store) + Send>;
+
+/// Everything that outlives a repository: settings, session, the recent
+/// list, the trust list and the Git that was found.
+pub struct AppState {
+    pub settings: Settings,
+    pub session: Session,
+    pub recent: Recent,
+    pub trust: TrustList,
+    pub git: GitCheck,
+    pub repo: Option<OpenRepo>,
+    /// Opened as soon as Git is ready: the command-line path, or the last
+    /// session's repository.
+    pending_open: Option<(PathBuf, Quiet)>,
+    session_changed: bool,
+    saves: smol::channel::Sender<SaveJob>,
+    _tasks: Vec<Task<()>>,
+}
+
+/// Whether a failed open is reported. Restoring the last session is quiet:
+/// a repository that has gone away is not an error worth a message.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Quiet {
+    Yes,
+    No,
+}
+
+impl EventEmitter<AppEvent> for AppState {}
+
+impl AppState {
+    pub fn new(loaded: Loaded, cli_path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+        let Loaded {
+            store,
+            settings,
+            session,
+            recent,
+            trust,
+        } = loaded;
+
+        // One task writes every file, in order, off the UI thread.
+        let (saves, jobs) = smol::channel::unbounded::<SaveJob>();
+        let writer = cx.background_spawn(async move {
+            while let Ok(job) = jobs.recv().await {
+                job(&store);
+            }
+        });
+        let autosave = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(30))
+                    .await;
+                if this.update(cx, |this, _| this.save_session()).is_err() {
+                    return;
+                }
+            }
+        });
+
+        let pending_open = cli_path
+            .map(|path| (path, Quiet::No))
+            .or_else(|| session.open_repo.clone().map(|path| (path, Quiet::Yes)));
+        let mut this = Self {
+            settings,
+            session,
+            recent,
+            trust,
+            git: GitCheck::Checking,
+            repo: None,
+            pending_open,
+            session_changed: false,
+            saves,
+            _tasks: vec![writer, autosave],
+        };
+        this.check_git(cx);
+        this
+    }
+
+    /// Looks for a usable Git. Runs at launch and when the Git path setting
+    /// changes.
+    pub fn check_git(&mut self, cx: &mut Context<Self>) {
+        self.git = GitCheck::Checking;
+        cx.notify();
+        let custom = self.settings.git_path.clone();
+        let found = cx.background_spawn(async move { setup::find_git(custom.as_deref()) });
+        cx.spawn(async move |this, cx| {
+            let found = found.await;
+            let _ = this.update(cx, |this, cx| {
+                match found {
+                    Ok(version) => {
+                        tracing::info!(git = %version.text, path = %version.path.display(), "found Git");
+                        this.git = GitCheck::Ready(version);
+                        if let Some((path, quiet)) = this.pending_open.take() {
+                            this.open_with(path, quiet, cx);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "no usable Git");
+                        this.git = GitCheck::Failed(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn git_path(&self) -> Option<PathBuf> {
+        match &self.git {
+            GitCheck::Ready(version) => Some(version.path.clone()),
+            _ => None,
+        }
+    }
+
+    /// Opens the repository that contains `path`.
+    pub fn open(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.open_with(path, Quiet::No, cx);
+    }
+
+    fn open_with(&mut self, path: PathBuf, quiet: Quiet, cx: &mut Context<Self>) {
+        let Some(git) = self.git_path() else {
+            return;
+        };
+        let trust = self.trust.clone();
+        let opened = cx.background_spawn({
+            let path = path.clone();
+            async move { setup::open(&git, &path, &trust) }
+        });
+        cx.spawn(async move |this, cx| {
+            let opened = opened.await;
+            let _ = this.update(cx, |this, cx| match opened {
+                Ok(repository) => this.show(repository, cx),
+                Err(_) if quiet == Quiet::Yes => {
+                    this.session.open_repo = None;
+                    this.session_changed = true;
+                }
+                Err(error) if error.kind == GitErrorKind::NotARepository => {
+                    cx.emit(AppEvent::NotARepository(path));
+                }
+                Err(error) => cx.emit(AppEvent::Error(error)),
+            });
+        })
+        .detach();
+    }
+
+    /// Makes `path` a repository and opens it.
+    pub fn init(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let Some(git) = self.git_path() else {
+            return;
+        };
+        let mut trust = self.trust.clone();
+        let created = cx.background_spawn(async move {
+            let repository = setup::init(&git, &path, &mut trust)?;
+            Ok::<_, GitError>((repository, trust))
+        });
+        cx.spawn(async move |this, cx| {
+            let created = created.await;
+            let _ = this.update(cx, |this, cx| match created {
+                Ok((repository, trust)) => {
+                    this.trust = trust;
+                    this.save(&this.trust);
+                    this.show(repository, cx);
+                }
+                Err(error) => cx.emit(AppEvent::Error(error)),
+            });
+        })
+        .detach();
+    }
+
+    fn show(&mut self, repository: Repository, cx: &mut Context<Self>) {
+        let Some(git) = self.git_path() else {
+            return;
+        };
+        self.recent
+            .touch(&repository.path, &repository.name(), now());
+        self.save(&self.recent);
+        self.session.open_repo = Some(repository.path.clone());
+        self.save(&self.session);
+        self.repo = Some(OpenRepo {
+            runner: GitRunner::new(git, &repository.path, repository.trusted),
+            repository,
+        });
+        cx.notify();
+    }
+
+    pub fn close_repo(&mut self, cx: &mut Context<Self>) {
+        self.repo = None;
+        self.session.open_repo = None;
+        self.save(&self.session);
+        cx.notify();
+    }
+
+    /// Trusts the open repository, which lets it be changed and lets its
+    /// hooks run. The choice is kept.
+    pub fn trust_repo(&mut self, cx: &mut Context<Self>) {
+        let git = self.git_path();
+        let (Some(open), Some(git)) = (&mut self.repo, git) else {
+            return;
+        };
+        self.trust.insert(&open.repository.path);
+        open.repository.trusted = true;
+        open.runner = GitRunner::new(git, &open.repository.path, true);
+        self.save(&self.trust);
+        cx.notify();
+    }
+
+    pub fn update_settings(&mut self, change: impl FnOnce(&mut Settings), cx: &mut Context<Self>) {
+        let git_path = self.settings.git_path.clone();
+        change(&mut self.settings);
+        self.save(&self.settings);
+        if self.settings.git_path != git_path {
+            self.check_git(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn remove_recent(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.recent.remove(path);
+        self.save(&self.recent);
+        cx.notify();
+    }
+
+    /// Changes the session. It is written within 30 seconds and at quit.
+    pub fn update_session(&mut self, change: impl FnOnce(&mut Session)) {
+        let before = self.session.clone();
+        change(&mut self.session);
+        self.session_changed |= self.session != before;
+    }
+
+    fn save_session(&mut self) {
+        if std::mem::take(&mut self.session_changed) {
+            self.save(&self.session);
+        }
+    }
+
+    /// Writes the session and waits until every queued file is on disk.
+    pub fn flush(&mut self) -> impl Future<Output = ()> + use<> {
+        self.session_changed = true;
+        self.save_session();
+        let (done, written) = smol::channel::bounded::<()>(1);
+        let _ = self.saves.try_send(Box::new(move |_| {
+            let _ = done.try_send(());
+        }));
+        async move {
+            let _ = written.recv().await;
+        }
+    }
+
+    fn save<T: Persisted + Clone + Send + 'static>(&self, value: &T) {
+        let value = value.clone();
+        let _ = self.saves.try_send(Box::new(move |store| {
+            if let Err(error) = store.save(&value) {
+                tracing::error!(file = T::FILE, %error, "could not save");
+            }
+        }));
+    }
+}
+
+fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64)
+}
+
+/// The app state, readable from anywhere on the UI thread.
+pub struct AppStateHandle(pub gpui_kit::Entity<AppState>);
+
+impl gpui_kit::Global for AppStateHandle {}
+
+pub fn app_state(cx: &App) -> gpui_kit::Entity<AppState> {
+    cx.global::<AppStateHandle>().0.clone()
+}

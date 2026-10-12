@@ -1,8 +1,15 @@
 //! The GitTree app. The binaries and the UI tests share these modules.
 
+pub mod app_state;
+pub mod logging;
+pub mod platform;
 pub mod views;
 
+use gittree_core::GitErrorKind;
 use gpui_kit::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use rust_i18n::t;
+
+rust_i18n::i18n!("locales", fallback = "en");
 
 /// The working name. Change it here and in the bundle metadata.
 pub const APP_NAME: &str = "GitTree";
@@ -20,5 +27,44 @@ pub fn window_options(cx: &App) -> WindowOptions {
             ..Default::default()
         }),
         ..Default::default()
+    }
+}
+
+/// The plain-language message for a kind of Git failure.
+pub fn error_message(kind: GitErrorKind) -> String {
+    let key = match kind {
+        GitErrorKind::GitNotFound => "errors.git_not_found",
+        GitErrorKind::GitTooOld => "errors.git_too_old",
+        GitErrorKind::NotARepository => "errors.not_a_repository",
+        GitErrorKind::Untrusted => "errors.untrusted",
+        GitErrorKind::IndexLocked => "errors.index_locked",
+        GitErrorKind::Conflict => "errors.conflict",
+        GitErrorKind::DirtyWorkTree => "errors.dirty_work_tree",
+        GitErrorKind::NonFastForward => "errors.non_fast_forward",
+        GitErrorKind::AuthFailed => "errors.auth_failed",
+        GitErrorKind::Network => "errors.network",
+        GitErrorKind::RefExists => "errors.ref_exists",
+        GitErrorKind::RefNotFound => "errors.ref_not_found",
+        GitErrorKind::PatchDoesNotApply => "errors.patch_does_not_apply",
+        GitErrorKind::Cancelled => "errors.cancelled",
+        GitErrorKind::Other => "errors.other",
+    };
+    t!(key).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_error_kind_has_its_own_message() {
+        let messages: Vec<String> = GitErrorKind::ALL.into_iter().map(error_message).collect();
+        for message in &messages {
+            // A missing key comes back as the key itself.
+            assert!(!message.starts_with("errors."), "{message}");
+            assert!(message.ends_with('.'), "{message}");
+        }
+        let unique: std::collections::HashSet<&String> = messages.iter().collect();
+        assert_eq!(unique.len(), messages.len());
     }
 }

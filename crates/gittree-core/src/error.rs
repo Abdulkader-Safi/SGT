@@ -17,6 +17,26 @@ pub enum GitErrorKind {
     Other,
 }
 
+impl GitErrorKind {
+    pub const ALL: [Self; 15] = [
+        Self::GitNotFound,
+        Self::GitTooOld,
+        Self::NotARepository,
+        Self::Untrusted,
+        Self::IndexLocked,
+        Self::Conflict,
+        Self::DirtyWorkTree,
+        Self::NonFastForward,
+        Self::AuthFailed,
+        Self::Network,
+        Self::RefExists,
+        Self::RefNotFound,
+        Self::PatchDoesNotApply,
+        Self::Cancelled,
+        Self::Other,
+    ];
+}
+
 /// A failed Git call: what was run and what Git said.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("git {} failed ({kind:?}): {}", .args.join(" "), .stderr.trim_end())]

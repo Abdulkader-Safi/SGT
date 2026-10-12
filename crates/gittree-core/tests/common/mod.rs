@@ -1,4 +1,5 @@
 //! Helpers for tests that run real Git.
+#![allow(dead_code)]
 
 use std::io::Write;
 use std::path::Path;
@@ -9,7 +10,7 @@ use tempfile::TempDir;
 
 /// Points Git at an empty home folder, so tests never read or write the
 /// developer's real config.
-fn isolate_git() {
+pub fn isolate_git() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let home = Path::new(env!("CARGO_TARGET_TMPDIR")).join("home");
@@ -41,6 +42,11 @@ impl TestRepo {
 
     pub fn path(&self) -> &Path {
         self.dir.path()
+    }
+
+    /// A runner for this repository, as the app would make one.
+    pub fn runner(&self, trusted: bool) -> gittree_core::GitRunner {
+        gittree_core::GitRunner::new("git", self.path(), trusted)
     }
 
     /// Runs Git with `time` as the author and committer date. Returns stdout

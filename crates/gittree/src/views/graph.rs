@@ -30,7 +30,7 @@ pub fn load_history(repo: PathBuf, cx: &App) -> History {
         let mut layout = GraphLayout::default();
         let cancel = AtomicBool::new(false);
         stream_log(
-            &GitRunner::new(repo),
+            &GitRunner::new("git", repo, false),
             |commits| {
                 let rows: Vec<GraphRow> = commits
                     .iter()

@@ -10,7 +10,7 @@ use gittree_core::{GitErrorKind, GitRunner};
 fn load(repo: &TestRepo) -> Vec<Commit> {
     let mut commits = Vec::new();
     stream_log(
-        &GitRunner::new(repo.path()),
+        &repo.runner(false),
         |batch| commits.extend(batch),
         &AtomicBool::new(false),
     )
@@ -73,7 +73,7 @@ fn long_history(count: usize) -> TestRepo {
 #[test]
 fn delivers_batches_and_stops_when_cancelled() {
     let repo = long_history(LOG_BATCH * 2 + 500);
-    let runner = GitRunner::new(repo.path());
+    let runner = repo.runner(false);
 
     let mut sizes = Vec::new();
     stream_log(
@@ -101,8 +101,11 @@ fn delivers_batches_and_stops_when_cancelled() {
 #[test]
 fn a_folder_that_is_not_a_repository_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
-    let error =
-        stream_log(&GitRunner::new(dir.path()), |_| {}, &AtomicBool::new(false)).unwrap_err();
-    assert_eq!(error.kind, GitErrorKind::Other);
-    assert!(error.stderr.contains("not a git repository"), "{error}");
+    let error = stream_log(
+        &GitRunner::new("git", dir.path(), false),
+        |_| {},
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind, GitErrorKind::NotARepository, "{error}");
 }

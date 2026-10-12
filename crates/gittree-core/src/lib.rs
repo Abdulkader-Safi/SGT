@@ -6,6 +6,7 @@ pub mod model;
 pub mod ops;
 pub mod parse;
 pub mod runner;
+pub mod store;
 
 pub use error::{GitError, GitErrorKind};
-pub use runner::GitRunner;
+pub use runner::{Access, GitRunner};

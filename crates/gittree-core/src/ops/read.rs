@@ -1,11 +1,10 @@
-use std::io::{BufRead, BufReader, Read};
-use std::process::Stdio;
+use std::io::{self, BufRead, BufReader};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::error::{GitError, GitErrorKind};
-use crate::model::Commit;
+use crate::error::GitError;
+use crate::model::{Commit, Head};
 use crate::parse::log::{LOG_FORMAT, LogParser};
-use crate::runner::GitRunner;
+use crate::runner::{Access, GitRunner};
 
 pub const LOG_BATCH: usize = 2_000;
 
@@ -20,71 +19,65 @@ const LOG_ARGS: [&str; 6] = [
 ];
 
 /// Streams every commit reachable from any ref, newest first, in batches of
-/// `LOG_BATCH`. Checks `cancel` once per commit and kills Git when it is set.
+/// `LOG_BATCH`. Setting `cancel` stops it with `Cancelled`.
 pub fn stream_log(
     runner: &GitRunner,
     mut on_batch: impl FnMut(Vec<Commit>),
     cancel: &AtomicBool,
 ) -> Result<(), GitError> {
-    let error = |kind, exit_code, stderr| GitError {
-        kind,
-        args: LOG_ARGS.iter().map(|arg| arg.to_string()).collect(),
-        exit_code,
-        stderr,
-    };
-
-    let mut child = runner
-        .read_command(LOG_ARGS)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        // ponytail: stderr is read after stdout ends. Fine for `git log`,
-        // whose errors fit in the pipe buffer. Drain it on a thread if a
-        // call can ever write more than 64 KB of errors.
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| error(GitErrorKind::GitNotFound, None, e.to_string()))?;
-
-    let mut stdout = BufReader::with_capacity(1 << 16, child.stdout.take().expect("piped"));
-    let mut parser = LogParser::default();
-    let mut record = Vec::new();
-    let mut batch = Vec::with_capacity(LOG_BATCH);
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error(GitErrorKind::Cancelled, None, String::new()));
-        }
-        record.clear();
-        let read = stdout
-            .read_until(0, &mut record)
-            .map_err(|e| error(GitErrorKind::Other, None, e.to_string()))?;
-        if read == 0 {
-            break;
-        }
-        if record.last() == Some(&0) {
-            record.pop();
-        }
-        if let Some(commit) = parser.parse(&record) {
-            batch.push(commit);
-            if batch.len() == LOG_BATCH {
-                on_batch(std::mem::replace(&mut batch, Vec::with_capacity(LOG_BATCH)));
+    runner.run(Access::Read, LOG_ARGS, None, Some(cancel), |stdout| {
+        let mut stdout = BufReader::with_capacity(1 << 16, stdout);
+        let mut parser = LogParser::default();
+        let mut record = Vec::new();
+        let mut batch = Vec::with_capacity(LOG_BATCH);
+        loop {
+            // Checked here as well as by the runner, so no batch is
+            // delivered after the caller cancels.
+            if cancel.load(Ordering::Relaxed) {
+                return Err(io::Error::other("cancelled"));
+            }
+            record.clear();
+            if stdout.read_until(0, &mut record)? == 0 {
+                break;
+            }
+            if record.last() == Some(&0) {
+                record.pop();
+            }
+            if let Some(commit) = parser.parse(&record) {
+                batch.push(commit);
+                if batch.len() == LOG_BATCH {
+                    on_batch(std::mem::replace(&mut batch, Vec::with_capacity(LOG_BATCH)));
+                }
             }
         }
-    }
-    if !batch.is_empty() {
-        on_batch(batch);
-    }
-
-    let mut stderr = String::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        let _ = pipe.read_to_string(&mut stderr);
-    }
-    let status = child
-        .wait()
-        .map_err(|e| error(GitErrorKind::Other, None, e.to_string()))?;
-    if status.success() {
+        if !batch.is_empty() {
+            on_batch(batch);
+        }
         Ok(())
-    } else {
-        Err(error(GitErrorKind::Other, status.code(), stderr))
+    })
+}
+
+/// Where HEAD points: a branch, a branch with no commit yet, or a commit.
+pub fn head(runner: &GitRunner) -> Result<Head, GitError> {
+    match runner.read(["symbolic-ref", "-q", "HEAD"]) {
+        Ok(name) => {
+            let name = String::from_utf8_lossy(&name);
+            let name = name.trim_end();
+            let name = name.strip_prefix("refs/heads/").unwrap_or(name).to_owned();
+            let born = runner.read(["rev-parse", "-q", "--verify", "HEAD"]).is_ok();
+            Ok(if born {
+                Head::Branch(name)
+            } else {
+                Head::Unborn(name)
+            })
+        }
+        // Exit code 1 with -q means HEAD is not a symbolic ref.
+        Err(error) if error.exit_code == Some(1) => {
+            let oid = runner.read(["rev-parse", "--verify", "HEAD"])?;
+            Ok(Head::Detached(
+                String::from_utf8_lossy(&oid).trim_end().into(),
+            ))
+        }
+        Err(error) => Err(error),
     }
 }

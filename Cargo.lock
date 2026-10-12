@@ -2048,6 +2048,7 @@ dependencies = [
  "libc",
  "rust-i18n",
  "smol",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
 ]

@@ -1,5 +1,4 @@
 use std::ops::Range;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -24,13 +23,13 @@ pub struct History {
 
 /// Starts reading a repository's history on the background executor. Call it
 /// before the window exists, so Git runs while the UI starts up.
-pub fn load_history(repo: PathBuf, cx: &App) -> History {
+pub fn load_history(runner: GitRunner, cx: &App) -> History {
     let (tx, batches) = smol::channel::unbounded();
     let git = cx.background_spawn(async move {
         let mut layout = GraphLayout::default();
         let cancel = AtomicBool::new(false);
         stream_log(
-            &GitRunner::new("git", repo, false),
+            &runner,
             |commits| {
                 let rows: Vec<GraphRow> = commits
                     .iter()

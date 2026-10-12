@@ -7,7 +7,7 @@ Milestone status, decisions, and deviations from `docs/spec/06-build-spec.md`.
 | Milestone | Status |
 |-----------|--------|
 | M0: de-risk | Done 2026-10-12. All four targets met, no fallback needed |
-| M1: app shell | Not started |
+| M1: app shell | Built, 45 tests pass. Waiting on the manual checks listed below |
 | M2 to M10 | Not started |
 
 ## M0: de-risk
@@ -81,3 +81,49 @@ Nothing has to be built from primitives. Each one still needs its 0.7.3 docs rea
 - Lane colours are a fixed list in `graph_element.rs`. M1 moves them to the theme.
 - `block` 0.1.6, a dependency of GPUI on macOS, triggers a future-incompatibility warning on Rust 1.97.1. It builds today. Watch it when the toolchain is next raised.
 - At 100,000 rows the list is 2.4 million pixels tall, which `f32` scroll offsets still place to a quarter of a pixel. A repository ten times larger would need a check.
+
+## M1: app shell
+
+### What exists
+
+- Core: `GitRunner` (fixed environment, activity records, cancellation, trust gate), all 15 `GitErrorKind`s, `find_git`, `open`, `init`, `head`, and `store.rs` for settings, session, recents and trust.
+- App: `AppState`, the Git check screen, the welcome screen, open by picker, drop or command-line path, init, the workspace frame with three resizable panels, session restore, the menu bar, the settings window, light and dark themes, the error toast with a Details dialog, file logging, the CI workflow.
+
+### Checked by tests
+
+- Trust (FR-SAFE-04): planted hooks and an fsmonitor command do not run when browsing untrusted, every write is refused before Git starts, and a control shows plain Git does run them. Trust is remembered across launches.
+- Open from a command-line path, the offer to create a repository in a plain folder, init giving a trusted empty repository (FR-REPO-01, FR-REPO-03).
+- Recents and the open repository come back after a restart (FR-REPO-04, FR-STATE-04).
+- A missing or old Git blocks the app and clears when the path is fixed (FR-REPO-07).
+- Settings persist (FR-SET-01). One message per error kind (FR-STATE-03).
+
+### Still needs a check by hand
+
+No acceptance box is ticked yet, because these were not exercised in a real window:
+
+- The folder picker, and dropping a folder on the window.
+- The menu bar: six menus, shortcuts, and whether items with no handler yet show greyed out.
+- The settings window: each control, reset, and changes applying at once.
+- Light theme, and "System" following macOS within 1 second. Dark was seen working.
+- The error toast and its Details dialog.
+- Quitting with Cmd+Q writing the session. The 30-second autosave was seen working.
+
+### Decisions
+
+- The JSON files are read on a plain thread at launch, in parallel with UI setup, and written by one background task in order.
+- Closing the last window quits the app.
+- The workspace's middle panel shows the M0 graph through the repository's trust-checked runner. The sidebar and detail panels are empty until M2.
+- A failed reopen of the last session's repository is silent. A failed open the user asked for is not.
+- The saved window size is the content size. GPUI reports the frame with its title bar but opens by content size, so saving the frame grew the window by 32 pixels per launch.
+
+### Deviations from the spec
+
+- No Clone button on the welcome screen yet. Clone is M6, and a button that does nothing is worse than none.
+- `Commit.parents` and `GraphRow.edges` are `Vec`, and `Commit.summary` is `Arc<str>`, where stage 5 says `SmallVec` and `String`. Memory is at 127 MB of a 400 MB budget, and `Arc<str>` lets rows share the text with the UI without copying.
+- The default diff font is "Menlo", standing in for "system monospace".
+- The app no longer starts `git log` before the UI, because it must find Git and open the repository first. M2 should measure this again.
+- A bare repository does not open. Git's own error is shown.
+
+### Open question for M2: untrusted repositories and filters
+
+The four overrides the spec lists (`core.hooksPath`, `core.fsmonitor`, `core.sshCommand`, `credential.helper`) do not cover every program a repository's own `.git/config` can name. `filter.<name>.clean` and `filter.<name>.smudge` can run during `git status` and `git diff`, and `diff.<name>.textconv` is covered only by `--no-textconv` on diff calls. M1 runs only `rev-parse`, `symbolic-ref` and `log`, so nothing is exposed today. Before M2 adds `status` and `diff`, this needs a decision, for example reading the repository's config and overriding every filter and driver command it defines. Not tested yet, so treat it as a suspicion until a planted-filter test confirms it.

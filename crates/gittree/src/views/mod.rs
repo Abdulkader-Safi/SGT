@@ -1,2 +1,7 @@
+pub mod git_check;
 pub mod graph;
 pub mod graph_element;
+pub mod root;
+pub mod settings;
+pub mod welcome;
+pub mod workspace;

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use gittree::views::graph::{GraphView, load_history};
 use gittree::window_options;
+use gittree_core::GitRunner;
 use gpui_kit::{
     AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window,
     WindowOptions, canvas, div, point, px,
@@ -166,13 +167,13 @@ fn main() {
         std::process::exit(2);
     };
     gpui_kit::application().run(move |cx| {
-        let history = load_history(repo.clone(), cx);
+        let history = load_history(GitRunner::new("git", &repo, false), cx);
         gpui_kit::init(cx);
         let options = WindowOptions {
             // GPUI slows an unfocused window to 30 frames per second, which
             // would hide the real frame times when the bench is not in front.
             inactive_frame_interval: None,
-            ..window_options(cx)
+            ..window_options(None, cx)
         };
         gpui_kit::open_window(options, cx, |_, cx| {
             cx.new(|cx| {

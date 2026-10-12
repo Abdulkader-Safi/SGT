@@ -66,6 +66,7 @@ pub struct AppState {
     session_changed: bool,
     saves: smol::channel::Sender<SaveJob>,
     _tasks: Vec<Task<()>>,
+    _on_quit: gpui_kit::Subscription,
 }
 
 /// Whether a failed open is reported. Restoring the last session is quiet:
@@ -109,6 +110,7 @@ impl AppState {
         let pending_open = cli_path
             .map(|path| (path, Quiet::No))
             .or_else(|| session.open_repo.clone().map(|path| (path, Quiet::Yes)));
+        let on_quit = cx.on_app_quit(|this, _| this.flush());
         let mut this = Self {
             settings,
             session,
@@ -120,6 +122,7 @@ impl AppState {
             session_changed: false,
             saves,
             _tasks: vec![writer, autosave],
+            _on_quit: on_quit,
         };
         this.check_git(cx);
         this
@@ -128,8 +131,6 @@ impl AppState {
     /// Looks for a usable Git. Runs at launch and when the Git path setting
     /// changes.
     pub fn check_git(&mut self, cx: &mut Context<Self>) {
-        self.git = GitCheck::Checking;
-        cx.notify();
         let custom = self.settings.git_path.clone();
         let found = cx.background_spawn(async move { setup::find_git(custom.as_deref()) });
         cx.spawn(async move |this, cx| {

@@ -1,12 +1,16 @@
 //! The GitTree app. The binaries and the UI tests share these modules.
 
+pub mod actions;
 pub mod app_state;
 pub mod logging;
+pub mod menus;
 pub mod platform;
+pub mod theme;
 pub mod views;
 
 use gittree_core::GitErrorKind;
-use gpui_kit::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use gittree_core::store::WindowState;
+use gpui_kit::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, px, size};
 use rust_i18n::t;
 
 rust_i18n::i18n!("locales", fallback = "en");
@@ -14,13 +18,24 @@ rust_i18n::i18n!("locales", fallback = "en");
 /// The working name. Change it here and in the bundle metadata.
 pub const APP_NAME: &str = "GitTree";
 
-pub fn window_options(cx: &App) -> WindowOptions {
+/// Options for the main window. `saved` is where the window was last time.
+pub fn window_options(saved: Option<WindowState>, cx: &App) -> WindowOptions {
+    let bounds = match saved {
+        Some(saved) => {
+            let frame = Bounds::new(
+                point(px(saved.x), px(saved.y)),
+                size(px(saved.width), px(saved.height)),
+            );
+            if saved.maximized {
+                WindowBounds::Maximized(frame)
+            } else {
+                WindowBounds::Windowed(frame)
+            }
+        }
+        None => WindowBounds::Windowed(Bounds::centered(None, size(px(1200.), px(800.)), cx)),
+    };
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(1200.), px(800.)),
-            cx,
-        ))),
+        window_bounds: Some(bounds),
         window_min_size: Some(size(px(900.), px(600.))),
         titlebar: Some(TitlebarOptions {
             title: Some(APP_NAME.into()),

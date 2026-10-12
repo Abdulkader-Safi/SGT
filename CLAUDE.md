@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-M0 (the graph performance spike) is done. The workspace exists with both crates: the core crate has a read-only `GitRunner`, the log parser, `stream_log` and the lane layout, and the app draws the commit graph and nothing else. `PROGRESS.md` has the bench numbers and decisions. Next is M1.
+M0 (the graph performance spike) is done and M1 (the app shell) is built: Git check, welcome screen, open and init, trust, the workspace frame, session restore, menu bar, settings and themes. `PROGRESS.md` lists what M1 still needs checked by hand, and an open question about filters in untrusted repositories that must be settled before M2 adds `status` and `diff`.
 
 `docs/spec/06-build-spec.md` is the entry point: it is self-contained, and files 01 to 05 are the reasoning behind it. Build milestone by milestone, and follow its section 13.
 

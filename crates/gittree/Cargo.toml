@@ -1,0 +1,13 @@
+[package]
+name = "gittree"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gittree-core = { path = "../gittree-core" }
+gpui-kit = { version = "=0.7.3", features = ["tree-sitter-languages"] }
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.3", features = ["test-support"] }

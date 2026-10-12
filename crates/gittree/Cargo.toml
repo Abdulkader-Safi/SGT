@@ -4,10 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+default-run = "gittree"
 
 [dependencies]
 gittree-core = { path = "../gittree-core" }
 gpui-kit = { version = "=0.7.3", features = ["tree-sitter-languages"] }
+# Only the bench uses libc, to read peak memory.
+libc = "0.2"
+smol = "2"
 
 [dev-dependencies]
 gpui-kit = { version = "=0.7.3", features = ["test-support"] }

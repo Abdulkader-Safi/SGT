@@ -1,17 +1,17 @@
-use gpui_kit::*;
-
-struct Spike;
-
-impl Render for Spike {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child("GitTree")
-    }
-}
+use gittree::views::graph::GraphView;
+use gittree::window_options;
+use gpui_kit::AppContext;
 
 fn main() {
-    gpui_kit::application().run(|cx| {
+    let Some(repo) = std::env::args_os().nth(1) else {
+        eprintln!("usage: gittree <path to a repository>");
+        std::process::exit(2);
+    };
+    gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Spike))
-            .expect("failed to open window");
+        gpui_kit::open_window(window_options(cx), cx, |_, cx| {
+            cx.new(|cx| GraphView::new(repo.into(), cx))
+        })
+        .expect("failed to open window");
     });
 }

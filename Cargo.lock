@@ -2043,6 +2043,8 @@ version = "0.1.0"
 dependencies = [
  "gittree-core",
  "gpui-kit",
+ "libc",
+ "smol",
 ]
 
 [[package]]

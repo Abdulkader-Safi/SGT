@@ -227,6 +227,12 @@ ai:
   suggested: "Suggested by %{agent}. Read it before you mark the file resolved."
   too_long: "This file is too long to send to the agent."
   caveat: "From the commit message and its diff. It can be wrong: check the diff."
+  plan: "Plan commits"
+  planning: "Planning…"
+  plan_title: "Commit composer"
+  plan_count: "%{files} files into %{commits} commits"
+  plan_note: "Nothing is committed until you apply the plan. You can edit a message. Files the plan leaves out stay uncommitted. Each commit can be undone."
+  plan_apply: "Make %{count} commits"
 agents:
   title: "Agent sessions"
   hint: "Each runs in its own worktree, so your files stay as they are."

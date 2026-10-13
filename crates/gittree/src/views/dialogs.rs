@@ -1419,3 +1419,91 @@ pub fn create_pull_request(repo: Entity<RepoState>, window: &mut Window, cx: &mu
         cx,
     );
 }
+
+/// The commits an agent proposes for the uncommitted work: a message to
+/// edit and the files for each. Nothing is committed until it is applied.
+// ponytail: whole files, in the agent's order. Moving a file or a hunk to
+// another commit by dragging, as the design shows, is not built.
+pub fn commit_plan(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
+    let Some(plan) = repo.read(cx).ai.plan.clone() else {
+        return;
+    };
+    let messages: Vec<Entity<InputState>> = plan
+        .iter()
+        .map(|commit| text_input(&commit.message, String::new(), window, cx))
+        .collect();
+    let files: usize = plan.iter().map(|commit| commit.files.len()).sum();
+    let font = super::graph::mono(cx);
+    let shown = (plan.clone(), messages.clone());
+    form(
+        t!("ai.plan_title").into_owned(),
+        Some(t!("ai.plan_count", files = files, commits = plan.len()).into_owned()),
+        t!("ai.plan_apply", count = plan.len()).into_owned(),
+        messages.first().cloned(),
+        move |_, cx| {
+            let p = palette(cx);
+            let (plan, messages) = &shown;
+            let commits = plan
+                .iter()
+                .zip(messages)
+                .enumerate()
+                .map(|(ix, (commit, message))| {
+                    let paths = commit.files.iter().map(|path| {
+                        div()
+                            .pl(px(28.))
+                            .truncate()
+                            .font_family(font.clone())
+                            .text_size(px(12.))
+                            .text_color(p.text_secondary)
+                            .child(path.to_string())
+                    });
+                    v_flex()
+                        .gap(px(4.))
+                        .child(
+                            h_flex()
+                                .gap(px(8.))
+                                .child(
+                                    div()
+                                        .w(px(20.))
+                                        .flex_none()
+                                        .text_size(px(12.))
+                                        .text_color(p.text_tertiary)
+                                        .child((ix + 1).to_string()),
+                                )
+                                .child(div().flex_1().child(Input::new(message).small())),
+                        )
+                        .children(paths)
+                });
+            v_flex()
+                .gap(px(14.))
+                .child(
+                    v_flex()
+                        .id("commit-plan")
+                        .gap(px(12.))
+                        .max_h(px(320.))
+                        .overflow_y_scroll()
+                        .children(commits),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(p.text_tertiary)
+                        .child(t!("ai.plan_note").into_owned()),
+                )
+                .into_any_element()
+        },
+        move |_, cx| {
+            let mut plan = plan.clone();
+            for (commit, message) in plan.iter_mut().zip(&messages) {
+                commit.message = message.read(cx).value().trim().to_owned();
+                if commit.message.is_empty() {
+                    return false;
+                }
+            }
+            repo.update(cx, |repo, cx| repo.apply_plan(plan, cx));
+            true
+        },
+        window,
+        cx,
+    );
+}

@@ -128,6 +128,18 @@ pub fn staged_patch(runner: &GitRunner) -> Result<Vec<u8>, GitError> {
     ])
 }
 
+/// Every change to tracked files since HEAD as one patch, staged or not,
+/// for an agent to read. Before the first commit only the index has any.
+pub fn uncommitted_patch(runner: &GitRunner, has_commits: bool) -> Result<Vec<u8>, GitError> {
+    runner.read([
+        "diff",
+        if has_commits { "HEAD" } else { "--cached" },
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+    ])
+}
+
 /// A commit's message and patch, for an agent to read.
 pub fn commit_patch(runner: &GitRunner, oid: &Oid) -> Result<Vec<u8>, GitError> {
     runner.read([

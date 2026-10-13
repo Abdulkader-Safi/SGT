@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use gittree_core::agent::{self, AgentKind, Session, SessionState};
+use gittree_core::agent::{self, AgentKind, PlannedCommit, Session, SessionState};
 use gittree_core::graph::{GraphLayout, GraphRow};
 use gittree_core::hosting::{self, Gh};
 use gittree_core::journal::{Action, Blocked, Journal};
@@ -43,6 +43,8 @@ pub enum RepoEvent {
     Error(GitError),
     /// An agent wrote this commit message for the staged changes.
     MessageWritten(String),
+    /// An agent's commit plan is in `ai.plan`, ready to be shown.
+    Planned,
     /// The app made this worktree, so it joins the trust list.
     WorktreeCreated(std::path::PathBuf),
     /// The graph should bring this row into view.
@@ -83,6 +85,11 @@ pub enum Op {
     Commit {
         message: String,
         amend: bool,
+    },
+    /// Empties the index, then makes each planned commit from its files.
+    CommitPlan {
+        unstage: Vec<RepoPath>,
+        plan: Vec<PlannedCommit>,
     },
     Checkout(Checkout),
     /// Stashes everything, then checks out. For when local changes are in
@@ -373,6 +380,10 @@ pub struct Ai {
     pub suggestion: Option<(RepoPath, String)>,
     /// The agent whose suggestion is in the result box, and for which file.
     pub suggested_by: Option<(RepoPath, String)>,
+    /// Commits are being planned from the uncommitted work.
+    pub planning: bool,
+    /// The plan an agent proposed. Nothing is committed until it is applied.
+    pub plan: Option<Vec<PlannedCommit>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1329,6 +1340,65 @@ impl RepoState {
         });
     }
 
+    /// Has the chosen agent sort the uncommitted work into commits. The
+    /// plan lands in `ai.plan` with `RepoEvent::Planned`. Nothing changes
+    /// in the repository until `apply_plan`.
+    pub fn plan_commits(&mut self, kind: AgentKind, custom: &str, cx: &mut Context<Self>) {
+        let argv = match agent::ask_command(kind, custom) {
+            Ok(argv) => argv,
+            Err(problem) => return cx.emit(RepoEvent::Notice(problem)),
+        };
+        let files: Vec<RepoPath> = self.status.iter().map(|e| e.path.clone()).collect();
+        self.ai.planning = true;
+        cx.notify();
+        let (runner, has_commits) = (self.runner.clone(), self.has_commits());
+        let asked = cx.background_spawn(async move {
+            let patch = read::uncommitted_patch(&runner, has_commits).map_err(|e| e.stderr)?;
+            let answer = agent::ask(
+                &argv,
+                &agent::plan_prompt(&files, &patch),
+                &AtomicBool::new(false),
+            )?;
+            agent::parse_plan(&answer, &files)
+        });
+        self.ai_task = cx.spawn(async move |this, cx| {
+            let answer = asked.await;
+            let _ = this.update(cx, |this, cx| {
+                this.ai.planning = false;
+                match answer {
+                    Ok(plan) => {
+                        this.ai.plan = Some(plan);
+                        cx.emit(RepoEvent::Planned);
+                    }
+                    Err(problem) => cx.emit(RepoEvent::Notice(problem)),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// Makes the planned commits, in order. What is staged now is unstaged
+    /// first, so each commit holds its own files and no others.
+    pub fn apply_plan(&mut self, mut plan: Vec<PlannedCommit>, cx: &mut Context<Self>) {
+        self.ai.plan = None;
+        // A commit here would end a merge or rebase with part of the work.
+        if self.in_progress.is_some() {
+            return;
+        }
+        // A renamed file takes its old name along, or the commit would
+        // add the new file and leave the old one behind.
+        for commit in &mut plan {
+            let old_names = self.status.iter().filter_map(|entry| {
+                let renamed = commit.files.contains(&entry.path);
+                entry.orig_path.clone().filter(|_| renamed)
+            });
+            let old_names: Vec<RepoPath> = old_names.collect();
+            commit.files.extend(old_names);
+        }
+        let unstage = entry_paths(self.changes(true));
+        self.run_op(Op::CommitPlan { unstage, plan }, cx);
+    }
+
     /// Has the chosen agent suggest a result for the open conflicted file.
     /// Nothing is staged: the suggestion only fills the result box.
     pub fn suggest_conflict(&mut self, kind: AgentKind, custom: &str, cx: &mut Context<Self>) {
@@ -1868,6 +1938,8 @@ fn op_label(op: &Op) -> String {
         }
         Op::Stage(_)
         | Op::Unstage(_)
+        // Each of its commits gets a label of its own.
+        | Op::CommitPlan { .. }
         | Op::Undo
         | Op::StashApply(_)
         | Op::StashPop(_)
@@ -1984,6 +2056,34 @@ fn execute(
             journaled(action, &|| {
                 stage::commit(runner, &message, amend).map(Done::Committed)
             })
+        }
+        Op::CommitPlan { unstage, plan } => {
+            stage::unstage(runner, &unstage, has_commits)?;
+            let mut done = Done::Changed;
+            // Stops at the first commit that fails. Those before it stay,
+            // each with its own undo entry.
+            for commit in plan {
+                let summary = commit.message.lines().next().unwrap_or_default();
+                let label = t!("journal.commit", summary = summary).into_owned();
+                let action = Action::Commit {
+                    message: commit.message.clone(),
+                    amend: false,
+                };
+                let pending = journal.begin(runner, action, label)?;
+                let made = stage::stage(runner, &commit.files)
+                    .and_then(|()| stage::commit(runner, &commit.message, false));
+                match made {
+                    Ok(oid) => {
+                        journal.finish(runner, pending)?;
+                        done = Done::Committed(oid);
+                    }
+                    Err(error) => {
+                        journal.abandon(runner, pending);
+                        return Err(error);
+                    }
+                }
+            }
+            Ok(done)
         }
         Op::Checkout(target) => {
             let action = Action::Checkout {

@@ -1109,6 +1109,104 @@ fn an_agent_writes_a_message_and_explains_a_commit(cx: &mut TestAppContext) {
     );
 }
 
+/// FR-AGENT-05: the chosen agent sorts uncommitted work into commits, and
+/// applying the plan makes them, each with its own files and undo entry.
+/// A stand-in script plays the agent.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn an_agent_plans_commits_and_the_plan_is_applied(cx: &mut TestAppContext) {
+    use gittree::repo_state::Scope;
+    use gittree_core::agent::AgentKind;
+    use std::os::unix::fs::PermissionsExt;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() {}\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() { run() }\n").unwrap();
+    std::fs::write(dir.path().join("b.rs"), "fn run() {}\n").unwrap();
+    // Staged, and left out of the plan: it must end up in no commit.
+    std::fs::write(dir.path().join("c.txt"), "notes\n").unwrap();
+    git(dir.path(), &["add", "c.txt"]);
+    let asked = outside.path().join("asked.txt");
+    let script = outside.path().join("agent.sh");
+    let plan = r#"[{"message":"Call run","files":["a.rs","--force"]},{"message":"Add run","files":["b.rs","a.rs"]}]"#;
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncat > '{}'\ncat <<'END'\n```json\n{plan}\n```\nEND\n",
+            asked.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let command = script.to_str().unwrap().to_owned();
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.refresh(Scope::Status, cx)));
+    cx.run_until_parked();
+    let wait = |cx: &mut TestAppContext, done: &dyn Fn(&gittree::repo_state::RepoState) -> bool| {
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if cx.update(|cx| done(repo.read(cx))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("timed out");
+    };
+    let log = |format: &str| {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(["log", format, "--name-only"])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.plan_commits(AgentKind::Other, &command, cx)
+        })
+    });
+    wait(cx, &|repo| !repo.ai.planning);
+    let question = std::fs::read_to_string(&asked).unwrap();
+    assert!(
+        question.contains(r#"["a.rs","c.txt","b.rs"]"#)
+            && question.contains("+fn main() { run() }")
+    );
+    // Planning alone commits nothing.
+    assert_eq!(log("--format=%s"), "base\n\na.rs\n");
+    let plan = cx.update(|cx| repo.read(cx).ai.plan.clone().unwrap());
+    assert_eq!(plan.len(), 2);
+    assert_eq!(plan[0].files, ["a.rs".into()]);
+    assert_eq!(plan[1].files, ["b.rs".into()]);
+    // The composer opened with the plan, and Cancel commits nothing.
+    shell.in_window(cx, |window, cx| window.click("cancel", cx));
+
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.apply_plan(plan, cx)));
+    wait(cx, &|repo| !repo.busy);
+    assert_eq!(
+        log("--format=%s"),
+        "Add run\n\nb.rs\nCall run\n\na.rs\nbase\n\na.rs\n"
+    );
+    let status = Command::new("git")
+        .current_dir(dir.path())
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(status.stdout).unwrap(), "?? c.txt\n");
+    let journal = gittree_core::journal::Journal::new(&dir.path().join(".git"));
+    let labels: Vec<String> = journal.entries().into_iter().map(|e| e.label).collect();
+    assert_eq!(labels, ["Commit \"Call run\"", "Commit \"Add run\""]);
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

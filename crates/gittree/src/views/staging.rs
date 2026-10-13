@@ -116,6 +116,7 @@ impl StagingView {
                     let (summary, description) = split_message(message);
                     this.set_message(&summary, &description, window, cx);
                 }
+                RepoEvent::Planned => super::dialogs::commit_plan(this.repo.clone(), window, cx),
                 _ => {}
             },
         )
@@ -533,6 +534,14 @@ impl Render for StagingView {
             this.repo
                 .update(cx, |repo, cx| repo.write_message(kind, &command, cx));
         });
+        let planning = repo.ai.planning;
+        let mid_operation = repo.in_progress.is_some();
+        let plan_commits = cx.listener(|this, _: &gpui_kit::ClickEvent, _, cx| {
+            let settings = &this.app.read(cx).settings;
+            let (kind, command) = (settings.ai_agent, settings.ai_command.clone());
+            this.repo
+                .update(cx, |repo, cx| repo.plan_commits(kind, &command, cx));
+        });
         let summary_len = self.summary.read(cx).value().trim().chars().count();
         let too_long = summary_len > SUMMARY_LIMIT;
 
@@ -644,10 +653,30 @@ impl Render for StagingView {
                         )
                     })))
                     .child(
+                        Button::new("plan-commits")
+                            .small()
+                            .loading(planning)
+                            .disabled(
+                                planning
+                                    || writing
+                                    || busy
+                                    || no_changes
+                                    || conflicts
+                                    || mid_operation
+                                    || !trusted,
+                            )
+                            .label(if planning {
+                                t!("ai.planning").into_owned()
+                            } else {
+                                t!("ai.plan").into_owned()
+                            })
+                            .on_click(plan_commits),
+                    )
+                    .child(
                         Button::new("write-message")
                             .small()
                             .loading(writing)
-                            .disabled(writing || nothing_staged || !trusted)
+                            .disabled(writing || planning || nothing_staged || !trusted)
                             .label(if writing {
                                 t!("ai.writing").into_owned()
                             } else if rewrite {

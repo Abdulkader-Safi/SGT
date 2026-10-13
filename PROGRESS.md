@@ -22,7 +22,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M9 and M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
-| M13: AI helpers and Launchpad | Commit messages, commit explanations, conflict suggestions and Launchpad built, 163 tests pass. The commit composer is not started |
+| M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
 
 ## M0: de-risk
 
@@ -582,6 +582,15 @@ Each may edit files in its worktree without asking, and nothing wider. None can 
 - A file over 100,000 bytes is not sent.
 - The design shows a suggestion per conflict region. This one is for the whole file, because the result box is for the whole file.
 
-### Not started
+### Commit composer (built)
 
-- The commit composer: planning several commits from uncommitted work.
+- "Plan commits" in the commit box sends the list of changed files and the diff of the tracked ones to the AI helper. It answers with commits as JSON: a message and files for each.
+- The plan opens in a dialog with a message to edit per commit and its files. Nothing changes in the repository until "Make N commits".
+- Applying the plan unstages what is staged, then stages and commits each group in order, as one queued action. Each commit has its own undo entry. If one fails, the action stops there and the commits before it stay.
+- The answer is not trusted. Only files the app already lists as changed are kept, each in the first commit that names it, and they reach Git after `--`. A plan that names none of them is refused.
+- Files the plan leaves out stay uncommitted. A renamed file takes its old name into the same commit.
+- The button is off during a merge or rebase, with conflicts, and in an untrusted repository.
+- The design plans by hunk and lets you drag a file or hunk to another commit. This one plans whole files in the agent's order, and has no "Try again" in the dialog: cancel and press "Plan commits" again.
+- An untracked file is named to the agent but its content is not sent.
+
+Still needs a check by hand: a plan from a real agent on real work, and the dialog on screen.

@@ -366,6 +366,13 @@ pub struct Ai {
     pub explaining: Option<Oid>,
     /// A commit and its explanation.
     pub explained: Option<(Oid, String)>,
+    /// A conflict result is being worked out.
+    pub suggesting: bool,
+    /// A conflicted file and the result an agent suggests for it. The
+    /// conflict view takes it into its result box.
+    pub suggestion: Option<(RepoPath, String)>,
+    /// The agent whose suggestion is in the result box, and for which file.
+    pub suggested_by: Option<(RepoPath, String)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1314,6 +1321,51 @@ impl RepoState {
                     Ok(message) => {
                         this.ai.written_by = Some(by);
                         cx.emit(RepoEvent::MessageWritten(message));
+                    }
+                    Err(problem) => cx.emit(RepoEvent::Notice(problem)),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// Has the chosen agent suggest a result for the open conflicted file.
+    /// Nothing is staged: the suggestion only fills the result box.
+    pub fn suggest_conflict(&mut self, kind: AgentKind, custom: &str, cx: &mut Context<Self>) {
+        let Some(file) = &self.conflict else {
+            return;
+        };
+        let argv = match agent::ask_command(kind, custom) {
+            Ok(argv) => argv,
+            Err(problem) => return cx.emit(RepoEvent::Notice(problem)),
+        };
+        let by = match kind {
+            AgentKind::Other => argv[0].clone(),
+            known => known.label().to_owned(),
+        };
+        let (path, content) = (file.path.clone(), file.content.clone());
+        if content.len() > agent::ASK_LIMIT {
+            return cx.emit(RepoEvent::Notice(t!("ai.too_long").into_owned()));
+        }
+        self.ai.suggesting = true;
+        cx.notify();
+        let asked = cx.background_spawn(async move {
+            let answer = agent::ask(
+                &argv,
+                &agent::conflict_prompt(&content),
+                &AtomicBool::new(false),
+            )?;
+            // A text file ends with a line ending, which the answer lost.
+            Ok::<_, String>(format!("{answer}\n"))
+        });
+        self.ai_task = cx.spawn(async move |this, cx| {
+            let answer = asked.await;
+            let _ = this.update(cx, |this, cx| {
+                this.ai.suggesting = false;
+                match answer {
+                    Ok(text) => {
+                        this.ai.suggested_by = Some((path.clone(), by));
+                        this.ai.suggestion = Some((path, text));
                     }
                     Err(problem) => cx.emit(RepoEvent::Notice(problem)),
                 }

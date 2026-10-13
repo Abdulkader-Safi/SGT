@@ -1208,3 +1208,90 @@ esac
         .unwrap();
     assert!(pushed.status.success());
 }
+
+/// FR-AGENT-05: an agent's conflict result reaches the result box and
+/// changes nothing on disk. A stand-in script plays the agent.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn an_agent_suggests_a_conflict_result_without_staging_it(cx: &mut TestAppContext) {
+    use gittree::repo_state::Op;
+    use gittree_core::agent::AgentKind;
+    use std::os::unix::fs::PermissionsExt;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    git(dir.path(), &["config", "user.name", "Ada"]);
+    git(dir.path(), &["config", "user.email", "ada@example.com"]);
+    write("f.txt", "one\ntwo\nthree\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    git(dir.path(), &["switch", "-q", "-c", "side"]);
+    write("f.txt", "one\nSIDE\nthree\n");
+    git(dir.path(), &["commit", "-q", "-am", "side"]);
+    git(dir.path(), &["switch", "-q", "main"]);
+    write("f.txt", "one\nMAIN\nthree\n");
+    git(dir.path(), &["commit", "-q", "-am", "main"]);
+    let asked = outside.path().join("asked.txt");
+    let script = outside.path().join("agent.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncat > '{}'\nprintf 'one\\nBOTH\\nthree\\n'\n",
+            asked.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let command = script.to_str().unwrap().to_owned();
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let merge = Op::Merge {
+        branch: "side".into(),
+        no_ff: false,
+    };
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.run_op(merge, cx)));
+    for _ in 0..4 {
+        cx.run_until_parked();
+        shell.in_window(cx, |_, _| ());
+    }
+    cx.update(|cx| {
+        assert!(
+            repo.read(cx).conflict.is_some(),
+            "the conflicted file is open"
+        )
+    });
+
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.suggest_conflict(AgentKind::Other, &command, cx)
+        })
+    });
+    for _ in 0..200 {
+        cx.run_until_parked();
+        if cx.update(|cx| !repo.read(cx).ai.suggesting) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    // The view has already taken the suggestion into its result box.
+    shell.in_window(cx, |_, _| ());
+    cx.update(|cx| {
+        let ai = &repo.read(cx).ai;
+        assert!(ai.suggestion.is_none());
+        let (path, agent) = ai.suggested_by.as_ref().expect("a suggestion arrived");
+        assert_eq!(
+            (path.to_string(), agent.as_str()),
+            ("f.txt".to_owned(), command.as_str())
+        );
+    });
+    // The agent saw the markers, and the file on disk still has them.
+    assert!(std::fs::read_to_string(&asked).unwrap().contains("<<<<<<<"));
+    let on_disk = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
+    assert!(on_disk.contains("<<<<<<<") && on_disk.contains("SIDE"));
+}

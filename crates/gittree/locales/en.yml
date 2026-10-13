@@ -215,6 +215,10 @@ ai:
   explaining: "Explaining…"
   explained: "What this commit does"
   copy: "Copy"
+  suggest: "Suggest a result"
+  suggesting: "Working it out…"
+  suggested: "Suggested by %{agent}. Read it before you mark the file resolved."
+  too_long: "This file is too long to send to the agent."
   caveat: "From the commit message and its diff. It can be wrong: check the diff."
 agents:
   title: "Agent sessions"

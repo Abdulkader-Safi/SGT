@@ -22,7 +22,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M9 and M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
-| M13: AI helpers and Launchpad | Commit messages, commit explanations and Launchpad built, 161 tests pass. Conflict suggestions and the commit composer not started |
+| M13: AI helpers and Launchpad | Commit messages, commit explanations, conflict suggestions and Launchpad built, 163 tests pass. The commit composer is not started |
 
 ## M0: de-risk
 
@@ -568,6 +568,13 @@ Each may edit files in its worktree without asking, and nothing wider. None can 
 - The list is read when the Launchpad first opens and on Refresh. It does not update on its own.
 - Only GitHub, since `gh` is the only command it knows.
 
+### Conflict suggestions (built)
+
+- "Suggest a result" in the conflict view sends the conflicted file, markers and all, to the AI helper and puts its answer in the result box. A line names the agent and says to read it first.
+- Nothing is written or staged by the suggestion. The file changes only when the user presses "Mark resolved", as with a result typed by hand.
+- A file over 100,000 bytes is not sent.
+- The design shows a suggestion per conflict region. This one is for the whole file, because the result box is for the whole file.
+
 ### Not started
 
-- Conflict suggestions and the commit composer.
+- The commit composer: planning several commits from uncommitted work.

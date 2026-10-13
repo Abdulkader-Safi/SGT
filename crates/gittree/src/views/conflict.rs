@@ -72,9 +72,20 @@ impl ConflictView {
             return;
         };
         let key = (file.path.clone(), file.choices.clone());
+        let path = file.path.clone();
         if self.built.as_ref() != Some(&key) {
             let text = String::from_utf8_lossy(&file.result()).into_owned();
             self.built = Some(key);
+            self.result
+                .update(cx, |input, cx| input.set_value(text, window, cx));
+        }
+        // An agent's suggestion goes into the result box, to be read and
+        // edited like anything typed there.
+        if self.repo.read(cx).ai.suggestion.is_some()
+            && let Some((for_path, text)) =
+                self.repo.update(cx, |repo, _| repo.ai.suggestion.take())
+            && for_path == path
+        {
             self.result
                 .update(cx, |input, cx| input.set_value(text, window, cx));
         }
@@ -376,6 +387,14 @@ impl Render for ConflictView {
         let left = parse_conflicts(typed.as_bytes()).len();
         let (handle, result) = (self.repo.clone(), self.result.clone());
         let resolve_path = path.clone();
+        let suggest = self.repo.clone();
+        let ai = &self.repo.read(cx).ai;
+        let suggesting = ai.suggesting;
+        let suggested_by = ai
+            .suggested_by
+            .as_ref()
+            .filter(|(for_path, _)| *for_path == path)
+            .map(|(_, agent)| agent.clone());
         panel
             .child(header)
             .child(files)
@@ -405,8 +424,37 @@ impl Render for ConflictView {
                                                 t!("conflict.left", count = left).into_owned(),
                                             ),
                                         )
-                                    }),
+                                    })
+                                    .child(
+                                        Button::new("suggest-result")
+                                            .small()
+                                            .loading(suggesting)
+                                            .disabled(suggesting || busy)
+                                            .label(if suggesting {
+                                                t!("ai.suggesting").into_owned()
+                                            } else {
+                                                t!("ai.suggest").into_owned()
+                                            })
+                                            .on_click(move |_, _, cx| {
+                                                let settings = &crate::app_state::app_state(cx)
+                                                    .read(cx)
+                                                    .settings;
+                                                let (kind, command) = (
+                                                    settings.ai_agent,
+                                                    settings.ai_command.clone(),
+                                                );
+                                                suggest.update(cx, |repo, cx| {
+                                                    repo.suggest_conflict(kind, &command, cx)
+                                                })
+                                            }),
+                                    ),
                             )
+                            .children(suggested_by.map(|agent| {
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(p.text_tertiary)
+                                    .child(t!("ai.suggested", agent = agent).into_owned())
+                            }))
                             .child(Textarea::new(&self.result).small())
                             .child(
                                 h_flex().child(div().flex_1()).child(

@@ -4,7 +4,7 @@ use crate::error::{GitError, GitErrorKind};
 use crate::model::Oid;
 use crate::runner::{Access, GitRunner};
 
-fn refused(message: &str) -> GitError {
+pub(crate) fn refused(message: &str) -> GitError {
     GitError {
         kind: GitErrorKind::Other,
         args: Vec::new(),
@@ -26,7 +26,7 @@ pub fn check_name(runner: &GitRunner, name: &str) -> Result<(), GitError> {
 }
 
 /// A commit, branch or tag to start from. It must not look like an option.
-fn check_rev(rev: &str) -> Result<(), GitError> {
+pub(crate) fn check_rev(rev: &str) -> Result<(), GitError> {
     if rev.is_empty() || rev.starts_with('-') {
         return Err(refused("A revision cannot be empty or start with a dash."));
     }

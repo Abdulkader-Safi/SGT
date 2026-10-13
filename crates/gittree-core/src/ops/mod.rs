@@ -5,3 +5,4 @@ pub mod read;
 pub mod remote;
 pub mod setup;
 pub mod stage;
+pub mod worktree;

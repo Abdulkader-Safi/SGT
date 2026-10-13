@@ -34,6 +34,40 @@ pub enum Action {
         #[serde(skip)]
         patch: Vec<u8>,
     },
+    /// What was checked out, in words for the label.
+    Checkout {
+        target: String,
+    },
+    CreateBranch {
+        name: String,
+        at: String,
+        checkout: bool,
+    },
+    RenameBranch {
+        old: String,
+        new: String,
+    },
+    DeleteBranch {
+        name: String,
+        force: bool,
+    },
+    CreateTag {
+        name: String,
+        at: String,
+        message: Option<String>,
+    },
+    DeleteTag {
+        name: String,
+    },
+    StashPush {
+        message: String,
+        include_untracked: bool,
+    },
+    /// The dropped stash commit, so undo can store it again.
+    StashDrop {
+        oid: Oid,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,9 +233,20 @@ impl Journal {
         }
         let id = new_id().map_err(io_error)?;
         let head_before = head_state(runner);
+        let head_ref = |name: &String| format!("refs/heads/{name}");
         let touched: Vec<String> = match &action {
             Action::Commit { .. } => head_before.symbolic.iter().cloned().collect(),
-            Action::DiscardFiles { .. } | Action::DiscardLines { .. } => Vec::new(),
+            Action::DiscardFiles { .. } | Action::DiscardLines { .. } | Action::Checkout { .. } => {
+                Vec::new()
+            }
+            Action::CreateBranch { name, .. } | Action::DeleteBranch { name, .. } => {
+                vec![head_ref(name)]
+            }
+            Action::RenameBranch { old, new } => vec![head_ref(old), head_ref(new)],
+            Action::CreateTag { name, .. } | Action::DeleteTag { name } => {
+                vec![format!("refs/tags/{name}")]
+            }
+            Action::StashPush { .. } | Action::StashDrop { .. } => vec!["refs/stash".into()],
         };
         let refs_before = touched
             .into_iter()
@@ -213,7 +258,15 @@ impl Journal {
 
         let backup = self.backup_dir(&id);
         let snapshot = match &action {
-            Action::Commit { .. } => None,
+            Action::Commit { .. }
+            | Action::Checkout { .. }
+            | Action::CreateBranch { .. }
+            | Action::RenameBranch { .. }
+            | Action::DeleteBranch { .. }
+            | Action::CreateTag { .. }
+            | Action::DeleteTag { .. }
+            | Action::StashPush { .. }
+            | Action::StashDrop { .. } => None,
             Action::DiscardLines { patch, .. } => {
                 std::fs::create_dir_all(&backup).map_err(io_error)?;
                 std::fs::write(backup.join("discard.patch"), patch).map_err(io_error)?;
@@ -359,7 +412,47 @@ impl Journal {
                     restore_files(&backup.join("untracked"), runner.dir()).map_err(io_error)?;
                 }
             }
+            Action::Checkout { .. } => self.switch_back(runner, entry)?,
+            Action::CreateBranch { name, checkout, .. } => {
+                if *checkout {
+                    self.switch_back(runner, entry)?;
+                }
+                runner.write(["branch", "-D", name]).map(drop)?;
+            }
+            Action::RenameBranch { old, new } => {
+                runner.write(["branch", "-m", new, old]).map(drop)?
+            }
+            // Back to what each ref pointed at before.
+            Action::DeleteBranch { .. } | Action::DeleteTag { .. } => {
+                for (name, before) in &entry.refs_before {
+                    if let Some(oid) = before {
+                        runner.write(["update-ref", name, oid]).map(drop)?;
+                    }
+                }
+            }
+            Action::CreateTag { name, .. } => runner.write(["tag", "-d", name]).map(drop)?,
+            Action::StashPush { .. } => runner.write(["stash", "pop", "-q"]).map(drop)?,
+            Action::StashDrop { oid, message } => runner
+                .write(["stash", "store", "-m", message, oid])
+                .map(drop)?,
         }
+        self.mark_undone(entry)
+    }
+
+    /// Where HEAD was before the action: back on its branch, or detached.
+    fn switch_back(&self, runner: &GitRunner, entry: &JournalEntry) -> Result<(), GitError> {
+        let before = &entry.head_before;
+        match (&before.symbolic, &before.oid) {
+            (Some(name), _) => {
+                let short = name.strip_prefix("refs/heads/").unwrap_or(name);
+                runner.write(["switch", "-q", short]).map(drop)
+            }
+            (None, Some(oid)) => runner.write(["switch", "-q", "--detach", oid]).map(drop),
+            (None, None) => Ok(()),
+        }
+    }
+
+    fn mark_undone(&self, entry: &JournalEntry) -> Result<(), GitError> {
         let mut entries = self.entries();
         for saved in entries.iter_mut().filter(|saved| saved.id == entry.id) {
             saved.undone = true;

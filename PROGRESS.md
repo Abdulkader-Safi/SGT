@@ -469,6 +469,7 @@ All three systems pass fmt, clippy and every test as of commit `Port step 4`. Ge
 - Light accent `2563EB` to `2160E6`, light warning `9A6700` to `946300`.
 - Three light lane colours are darker (orange, teal, yellow), and avatar initials are dark on the dark theme's lanes.
 - The Figma file still has the old values.
+- On 2026-10-13 the Design page was put into eight Figma sections, one per numbered group, with frames in number order and the dialogs laid out side by side.
 
 ### Still needs a check by hand
 

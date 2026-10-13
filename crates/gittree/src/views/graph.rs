@@ -1,135 +1,181 @@
 use std::ops::Range;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
 
-use gittree_core::graph::{GraphLayout, GraphRow};
-use gittree_core::model::Commit;
-use gittree_core::ops::read::stream_log;
-use gittree_core::{GitError, GitRunner};
-use gpui_kit::component::ActiveTheme;
+use gittree_core::model::{Head, RefKind};
+use gpui_kit::component::button::Button;
+use gpui_kit::component::skeleton::Skeleton;
+use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    Styled, Task, UniformListScrollHandle, Window, div, px, uniform_list,
+    App, Context, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, Render, ScrollStrategy, SharedString, StatefulInteractiveElement, Styled,
+    UniformListScrollHandle, Window, div, px, uniform_list,
 };
+use rust_i18n::t;
 
 use super::graph_element::{ROW_HEIGHT, graph_cell};
+use crate::local_time;
+use crate::repo_state::{RepoEvent, RepoState, Scope};
 
-/// A history being read: batches of commits with their graph rows, then the
-/// result of the Git call.
-pub struct History {
-    batches: smol::channel::Receiver<(Vec<Commit>, Vec<GraphRow>)>,
-    git: Task<Result<(), GitError>>,
-}
+/// Rows a Page Up or Page Down moves.
+const PAGE: isize = 20;
 
-/// Starts reading a repository's history on the background executor. Call it
-/// before the window exists, so Git runs while the UI starts up.
-pub fn load_history(runner: GitRunner, cx: &App) -> History {
-    let (tx, batches) = smol::channel::unbounded();
-    let git = cx.background_spawn(async move {
-        let mut layout = GraphLayout::default();
-        let cancel = AtomicBool::new(false);
-        stream_log(
-            &runner,
-            |commits| {
-                let rows: Vec<GraphRow> = commits
-                    .iter()
-                    .map(|commit| layout.push(&commit.oid, &commit.parents))
-                    .collect();
-                // Nobody is listening once the receiver is gone.
-                if tx.send_blocking((commits, rows)).is_err() {
-                    cancel.store(true, Ordering::Relaxed);
-                }
-            },
-            &cancel,
-        )
-    });
-    History { batches, git }
-}
-
-/// The commit graph of one repository. This is the M0 spike: it holds the
-/// history itself. From M2 the data lives in `RepoState`.
+/// The commit graph: lanes, ref labels and one line per commit. It reads
+/// everything from `RepoState`.
 pub struct GraphView {
-    commits: Vec<Commit>,
-    rows: Vec<GraphRow>,
-    /// Widest row seen so far, in lanes.
-    lanes: usize,
-    error: Option<SharedString>,
+    repo: Entity<RepoState>,
     pub scroll: UniformListScrollHandle,
-    pub first_batch_at: Option<Instant>,
-    pub loaded_at: Option<Instant>,
-    _load: Task<()>,
+    pub focus: FocusHandle,
 }
 
 impl GraphView {
-    pub fn new(history: History, cx: &mut Context<Self>) -> Self {
-        let load = cx.spawn(async move |this, cx| {
-            while let Ok((commits, rows)) = history.batches.recv().await {
-                let added = this.update(cx, |this, cx| {
-                    this.first_batch_at.get_or_insert_with(Instant::now);
-                    this.lanes = rows.iter().map(lane_count).fold(this.lanes, usize::max);
-                    this.commits.extend(commits);
-                    this.rows.extend(rows);
-                    cx.notify();
-                });
-                if added.is_err() {
-                    return;
-                }
+    pub fn new(repo: Entity<RepoState>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&repo, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&repo, |this, _, event: &RepoEvent, _| {
+            if let RepoEvent::Reveal(row) = event {
+                this.scroll.scroll_to_item(*row, ScrollStrategy::Nearest);
             }
-            let result = history.git.await;
-            let _ = this.update(cx, |this, cx| {
-                this.loaded_at = Some(Instant::now());
-                this.error = result.err().map(|error| error.to_string().into());
-                cx.notify();
-            });
-        });
+        })
+        .detach();
         Self {
-            commits: Vec::new(),
-            rows: Vec::new(),
-            lanes: 1,
-            error: None,
+            repo,
             scroll: UniformListScrollHandle::new(),
-            first_batch_at: None,
-            loaded_at: None,
-            _load: load,
+            focus: cx.focus_handle(),
         }
     }
 
-    pub fn row_count(&self) -> usize {
-        self.rows.len()
+    fn on_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let delta = match event.keystroke.key.as_str() {
+            "up" => -1,
+            "down" => 1,
+            "pageup" => -PAGE,
+            "pagedown" => PAGE,
+            "home" => isize::MIN / 2,
+            "end" => isize::MAX / 2,
+            _ => return,
+        };
+        self.repo
+            .update(cx, |repo, cx| repo.move_selection(delta, cx));
+        cx.stop_propagation();
     }
 }
 
-fn lane_count(row: &GraphRow) -> usize {
-    let widest = row
-        .edges
-        .iter()
-        .map(|edge| edge.from_lane.max(edge.to_lane))
-        .fold(row.lane, u16::max);
-    widest as usize + 1
+/// A small label for a branch, tag or HEAD on a graph row.
+fn ref_label(text: SharedString, background: Hsla, foreground: Hsla) -> impl IntoElement {
+    div()
+        .flex_none()
+        .px_1p5()
+        .rounded_sm()
+        .text_xs()
+        .bg(background)
+        .text_color(foreground)
+        .child(text)
+}
+
+fn ref_labels(repo: &RepoState, oid: &str, cx: &App) -> Vec<gpui_kit::AnyElement> {
+    let theme = cx.theme();
+    let mut labels = Vec::new();
+    if matches!(&repo.repository.head, Head::Detached(head) if &**head == oid) {
+        labels.push(
+            ref_label(
+                t!("graph.head").into_owned().into(),
+                theme.primary,
+                theme.primary_foreground,
+            )
+            .into_any_element(),
+        );
+    }
+    for &ix in repo.refs_at.get(oid).into_iter().flatten() {
+        let r = &repo.refs[ix];
+        // Each kind looks different, and the current branch stands out.
+        let (background, foreground) = match r.kind {
+            RefKind::Local if r.is_current => (theme.primary, theme.primary_foreground),
+            RefKind::Local => (theme.success.opacity(0.25), theme.foreground),
+            RefKind::Remote => (theme.muted, theme.muted_foreground),
+            RefKind::Tag => (theme.warning.opacity(0.3), theme.foreground),
+            RefKind::Stash => (theme.info.opacity(0.3), theme.foreground),
+        };
+        let name: SharedString = r.short_name().to_owned().into();
+        labels.push(ref_label(name, background, foreground).into_any_element());
+    }
+    labels
 }
 
 impl Render for GraphView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (background, muted) = (theme.background, theme.muted_foreground);
-        let lanes = self.lanes;
+        let (background, muted, selected_bg, match_bg) = (
+            theme.background,
+            theme.muted_foreground,
+            theme.list_active,
+            theme.warning.opacity(0.12),
+        );
+        let repo = self.repo.read(cx);
 
+        if let Some(error) = &repo.log_error {
+            let message = crate::error_message(error.kind);
+            let repo = self.repo.clone();
+            return v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .child(t!("graph.load_failed").into_owned())
+                .child(div().text_color(muted).child(message))
+                .child(
+                    Button::new("retry-log")
+                        .label(t!("graph.retry").into_owned())
+                        .on_click(move |_, _, cx| {
+                            repo.update(cx, |repo, cx| repo.refresh(Scope::All, cx))
+                        }),
+                )
+                .into_any_element();
+        }
+        if repo.loading && repo.history.commits.is_empty() {
+            // Skeleton rows until the first batch arrives.
+            return v_flex()
+                .size_full()
+                .p_2()
+                .gap_2()
+                .children((0..12).map(|n| {
+                    Skeleton::new()
+                        .h(px(16.))
+                        .w(px(260. + 37. * (n % 5) as f32))
+                }))
+                .into_any_element();
+        }
+
+        let lanes = repo.history.lanes;
+        let handle = self.repo.clone();
+        let focus = self.focus.clone();
         let list = uniform_list(
             "graph",
-            self.rows.len(),
-            cx.processor(move |this, range: Range<usize>, _, _| {
+            repo.history.commits.len(),
+            cx.processor(move |this, range: Range<usize>, _, cx| {
+                let repo = this.repo.read(cx);
+                let selected = repo.selected_row();
                 range
                     .map(|ix| {
-                        let commit = &this.commits[ix];
-                        div()
+                        let commit = &repo.history.commits[ix];
+                        let is_match = repo.search.matches.binary_search(&ix).is_ok();
+                        let (handle, focus) = (handle.clone(), focus.clone());
+                        h_flex()
                             .id(ix)
                             .h(ROW_HEIGHT)
                             .w_full()
                             .px_2()
                             .gap_2()
-                            .flex()
-                            .items_center()
-                            .child(graph_cell(this.rows[ix].clone(), lanes, background))
+                            .when_some(
+                                (selected == Some(ix))
+                                    .then_some(selected_bg)
+                                    .or(is_match.then_some(match_bg)),
+                                |row, color| row.bg(color),
+                            )
+                            .on_click(move |_, window, cx| {
+                                focus.focus(window, cx);
+                                handle.update(cx, |repo, cx| repo.select_row(ix, cx));
+                            })
+                            .child(graph_cell(repo.history.rows[ix].clone(), lanes, background))
+                            .children(ref_labels(repo, &commit.oid, cx))
                             .child(
                                 div()
                                     .flex_1()
@@ -138,16 +184,25 @@ impl Render for GraphView {
                             )
                             .child(
                                 div()
-                                    .w(px(140.))
+                                    .w(px(130.))
+                                    .flex_none()
                                     .truncate()
                                     .text_color(muted)
                                     .child(SharedString::from(commit.author_name.clone())),
                             )
                             .child(
                                 div()
-                                    .w(px(64.))
+                                    .w(px(118.))
+                                    .flex_none()
                                     .text_color(muted)
-                                    .child(SharedString::from(commit.oid[..7].to_string())),
+                                    .child(local_time(commit.author_time)),
+                            )
+                            .child(
+                                div()
+                                    .w(px(60.))
+                                    .flex_none()
+                                    .text_color(muted)
+                                    .child(commit.oid[..7.min(commit.oid.len())].to_string()),
                             )
                     })
                     .collect()
@@ -157,11 +212,13 @@ impl Render for GraphView {
         .size_full();
 
         div()
+            .id("graph-panel")
             .size_full()
             .bg(background)
-            .text_color(theme.foreground)
             .text_sm()
-            .children(self.error.clone())
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key))
             .child(list)
+            .into_any_element()
     }
 }

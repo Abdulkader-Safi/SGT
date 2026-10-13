@@ -105,7 +105,7 @@ Versions below were read from crates.io on 2026-10-12.
 
 ## Persistence and configuration
 
-- Choice: JSON files written with `serde` 1.0 and `serde_json`, in `~/Library/Application Support/GitTree/` (found with the `dirs` crate). Files are written to a temporary name and renamed, so a crash cannot leave half a file.
+- Choice: JSON files written with `serde` 1.0 and `serde_json`, in `~/Library/Application Support/Safi Git Tree/` (found with the `dirs` crate). Files are written to a temporary name and renamed, so a crash cannot leave half a file.
 - Considered: `rusqlite` 0.40 (dropped: five small documents do not need a database). macOS user defaults (dropped: not portable to v1.1 platforms).
 - Why: FR-SET-01, FR-STATE-04, FR-REPO-04, FR-SAFE-04.
 
@@ -117,7 +117,7 @@ Versions below were read from crates.io on 2026-10-12.
 
 ## Errors and logging
 
-- Choice: `thiserror` for the typed `GitError` in the core crate, `anyhow` at the app boundary, `tracing` with a file writer for logs at `~/Library/Logs/GitTree/gittree.log`, truncated at startup when over 5 MB.
+- Choice: `thiserror` for the typed `GitError` in the core crate, `anyhow` at the app boundary, `tracing` with a file writer for logs at `~/Library/Logs/Safi Git Tree/gittree.log`, truncated at startup when over 5 MB.
 - Considered: `log` plus a custom file writer (dropped: GPUI Kit already brings `tracing`).
 - Why: FR-STATE-03, FR-STATE-05.
 
@@ -135,7 +135,7 @@ Versions below were read from crates.io on 2026-10-12.
 
 ## Distribution
 
-- Choice: `cargo-bundle` 0.12 to produce `GitTree.app` for local use. For the first public release: a universal binary (`aarch64-apple-darwin` plus `x86_64-apple-darwin` joined with `lipo`), signed and notarised with an Apple Developer ID, shipped as a DMG on GitHub Releases.
+- Choice: `cargo-bundle` 0.12 to produce `Safi Git Tree.app` for local use. For the first public release: a universal binary (`aarch64-apple-darwin` plus `x86_64-apple-darwin` joined with `lipo`), signed and notarised with an Apple Developer ID, shipped as a DMG on GitHub Releases.
 - Considered: `cargo-packager` 0.11.8 (dropped: last released November 2025, while cargo-bundle shipped in September 2026). Homebrew cask (later, once there is a signed release).
 - Why: NFR-05, NFR-07.
 - Landmines: an unsigned app is blocked by Gatekeeper on other people's Macs. Signing needs a paid Apple Developer membership. This blocks public distribution, not development.
@@ -167,7 +167,7 @@ To verify at build time: run `cargo deny check licenses` once before the first p
 5. **Parsing Git output** : formats differ by Git version, by locale, and by user config. Mitigation: porcelain and `-z` formats only, `LC_ALL=C`, explicit `--format`, a minimum Git version check (FR-REPO-07), tests with file names containing spaces, quotes, newlines, or non-ASCII characters.
 6. **Credential prompts** : the askpass round trip between Git, a helper process and a dialog is easy to deadlock. Spike: the first task of M6 is a fetch from a password-protected HTTPS remote and an SSH remote with a passphrase-protected key. Fallback: show Git's error and tell the user to authenticate once in a terminal.
 7. **Untrusted repositories** : Git config offers many ways to run a program, and the list of overrides may be incomplete. Mitigation: untrusted mode is read-only and runs a fixed, small set of read commands with every known hook and helper disabled. The test in FR-SAFE-04 plants hooks and helpers and checks none fire.
-8. **Name clash** : another commercial Git client already uses the name "GitTree". Mitigation: the name appears in one constant and the bundle metadata, so renaming before a public release is a one-commit change.
+8. **Name clash** : RESOLVED 2026-10-13. The working name "GitTree" clashed with another commercial Git client, so the product was renamed "Safi Git Tree" (SGT). The display name lives in one constant and the bundle metadata.
 
 ---
 

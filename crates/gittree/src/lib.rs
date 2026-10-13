@@ -1,10 +1,11 @@
-//! The GitTree app. The binaries and the UI tests share these modules.
+//! The Safi Git Tree app. The binaries and the UI tests share these modules.
 
 pub mod actions;
 pub mod app_state;
 pub mod logging;
 pub mod menus;
 pub mod platform;
+pub mod repo_state;
 pub mod theme;
 pub mod views;
 
@@ -16,7 +17,7 @@ use rust_i18n::t;
 rust_i18n::i18n!("locales", fallback = "en");
 
 /// The working name. Change it here and in the bundle metadata.
-pub const APP_NAME: &str = "GitTree";
+pub const APP_NAME: &str = "Safi Git Tree";
 
 /// Options for the main window. `saved` is where the window was last time.
 pub fn window_options(saved: Option<WindowState>, cx: &App) -> WindowOptions {
@@ -65,6 +66,16 @@ pub fn error_message(kind: GitErrorKind) -> String {
         GitErrorKind::Other => "errors.other",
     };
     t!(key).into_owned()
+}
+
+/// A time as the user's clock shows it, for example "2026-10-12 17:16".
+pub fn local_time(unix_seconds: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_opt(unix_seconds, 0)
+        .single()
+        .map(|time| time.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

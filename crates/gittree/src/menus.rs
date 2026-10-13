@@ -23,24 +23,22 @@ pub fn init(cx: &mut App) {
         disabled: false,
     };
     let menu = |key: &str, items: Vec<MenuItem>| Menu::new(t!(key).into_owned()).items(items);
+    let app_menu = |items: Vec<MenuItem>| Menu::new(crate::APP_NAME).items(items);
     let separator = MenuItem::separator;
 
     cx.set_menus([
         // The first menu is the app menu, whatever it is called.
-        menu(
-            "menu.about",
-            vec![
-                item("menu.settings", Box::new(OpenSettings)),
-                separator(),
-                MenuItem::os_submenu(t!("menu.services").into_owned(), SystemMenuType::Services),
-                separator(),
-                item("menu.hide", Box::new(Hide)),
-                item("menu.hide_others", Box::new(HideOthers)),
-                item("menu.show_all", Box::new(ShowAll)),
-                separator(),
-                item("menu.quit", Box::new(Quit)),
-            ],
-        ),
+        app_menu(vec![
+            item("menu.settings", Box::new(OpenSettings)),
+            separator(),
+            MenuItem::os_submenu(t!("menu.services").into_owned(), SystemMenuType::Services),
+            separator(),
+            item("menu.hide", Box::new(Hide)),
+            item("menu.hide_others", Box::new(HideOthers)),
+            item("menu.show_all", Box::new(ShowAll)),
+            separator(),
+            item("menu.quit", Box::new(Quit)),
+        ]),
         menu(
             "menu.file",
             vec![

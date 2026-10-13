@@ -31,13 +31,13 @@ impl Store {
         }
     }
 
-    /// `GITTREE_DATA_DIR` when set, otherwise the GitTree folder in the
+    /// `GITTREE_DATA_DIR` when set, otherwise the Safi Git Tree folder in the
     /// user's application data folder.
     pub fn default_dir() -> PathBuf {
         std::env::var_os("GITTREE_DATA_DIR")
             .map(PathBuf::from)
-            .or_else(|| dirs::data_dir().map(|dir| dir.join("GitTree")))
-            .unwrap_or_else(|| "GitTree".into())
+            .or_else(|| dirs::data_dir().map(|dir| dir.join("Safi Git Tree")))
+            .unwrap_or_else(|| "Safi Git Tree".into())
     }
 
     pub fn dir(&self) -> &Path {

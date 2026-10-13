@@ -2,13 +2,18 @@
 
 Milestone status, decisions, and deviations from `docs/spec/06-build-spec.md`.
 
+## Name
+
+Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). The window title, menus, messages, the data folder (`~/Library/Application Support/Safi Git Tree`) and the log folder (`~/Library/Logs/Safi Git Tree`) use the new name. Internal identifiers keep the old spelling: the crates, the `gittree` binary, the `GITTREE_*` environment variables, `refs/gittree/` and `.git/gittree/`. The folder on disk and the GitHub repository (`git-tree`) are unchanged.
+
 ## Status
 
 | Milestone | Status |
 |-----------|--------|
 | M0: de-risk | Done 2026-10-12. All four targets met, no fallback needed |
 | M1: app shell | Built, 45 tests pass. Waiting on the manual checks listed below |
-| M2 to M10 | Not started |
+| M2: graph and read-only browsing | Built, 57 tests pass. Waiting on the manual checks listed below |
+| M3 to M10 | Not started |
 
 ## M0: de-risk
 
@@ -131,3 +136,46 @@ A planted-filter test confirmed it: with only the four overrides the spec listed
 `GitRunner` now reads the repository's config before each untrusted call and overrides every setting there that names a program, leaving the user's global and system config alone. It also adds `--no-ext-diff --no-textconv` to diff-family commands itself, because Git tries to run an empty textconv command instead of skipping it. Stage 5 of the spec was edited and the matching text in 06 brought in line. The trust test now plants a filter and a textconv driver next to the hooks and fsmonitor command.
 
 Known cost: one extra `git config` call per Git call in an untrusted repository. Cache it per runner if a profile ever shows it.
+
+## M2: graph and read-only browsing
+
+### What exists
+
+- `RepoState`: the commit list and graph rows, refs, the selection with its details, files and diff, search, and a file watcher debounced by 300 ms. Stale results are dropped, and a reload builds the new history aside and swaps it in whole, keeping the selection by commit ID.
+- The graph view with ref labels, columns for summary, author, date and hash, selection, and arrow, Page Up, Page Down, Home and End.
+- The sidebar with Local, Remotes, Tags and Stashes groups, a filter and ahead/behind counts.
+- The commit detail panel: header, changed files, and an inline diff in a virtual list, with binary and too-large handling.
+- Search in the toolbar: text, `author:`, `file:`, a count, Enter and Shift+Enter.
+
+### Bench with the production graph view
+
+`cargo run --release -p gittree --bin bench -- target/big-repo`, 2026-10-13, same machine as M0, display at 120 Hz.
+
+| Measure | Target | Measured |
+|---------|--------|----------|
+| First rows drawn | under 1,000 ms | 607 ms |
+| Full load | under 5,000 ms | 766 ms |
+| Frame to frame, 95th percentile | under 16 ms | 8.6 to 9.3 ms |
+| App work per frame, 95th percentile | | 2.8 to 6.2 ms |
+| Peak memory | under 400 MB | 124 to 141 MB |
+
+The load times are from one run of three. In the other two the bench window was covered by other windows when it opened, GPUI drew nothing until it was uncovered, and the bench reported 46 and 67 seconds. That is the bench measuring a hidden window, not slow loading, but it means the load numbers rest on a single clean run. Rerun with the window in front before trusting them.
+
+### Checked by tests
+
+History and refs match Git, selecting a commit loads details, files and the first diff, the selection stops at the ends, text and `file:` search, and a commit made outside the app appears after the refresh the watcher asks for, with the selection kept.
+
+### Still needs a check by hand
+
+- The watcher itself: make a commit in a terminal and see it appear within 1 second. Tests switch the watcher off, because its thread breaks GPUI's test scheduler.
+- Clicking through the sidebar, file list, parent links and "Load all".
+- Keyboard movement in the graph, Cmd+F, Cmd+R.
+- How the diff and ref labels look in the light theme.
+
+### Decisions and deviations
+
+- The diff parser leaves paths empty and the caller fills them from the file list, which avoids reading Git's quoted path forms.
+- Search covers the summary, not the full message, because only summaries are loaded.
+- Any file change refreshes refs, and the log is read again only if refs or HEAD moved. Status refresh arrives with the staging view in M3.
+- No horizontal scrolling in the diff yet: long lines are clipped.
+- Tabs in diff lines are shown as four spaces.

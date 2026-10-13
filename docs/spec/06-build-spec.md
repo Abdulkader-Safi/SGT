@@ -1,4 +1,4 @@
-# Build spec: GitTree
+# Build spec: Safi Git Tree
 
 > **This is the hand-off document for Claude Code.** It is self-contained: build from this file alone. It pulls together the product, the users, the requirements, plus the tech decisions from stages 1 to 5. Where it says "see Stage N", that is optional background.
 
@@ -6,7 +6,7 @@ Status: signed off 2026-10-12. Sources: 01 to 05 as of that date.
 
 ## 1. What we're building
 
-GitTree (working name) is a native desktop Git client for macOS, written in Rust and rendered with GPUI. It is for developers who work across many repositories and want a visual commit graph, line-level staging, in-app conflict resolution and undo for every local action, without an Electron app, an account or a subscription. Its main difference: it is native and free, and every Git action is done by the Git already installed on the machine, so the app always agrees with the command line. The mission is a personal, source-available tool (Apache-2.0) with no backend, no telemetry and no network use beyond Git's own.
+Safi Git Tree (SGT) is a native desktop Git client for macOS, written in Rust and rendered with GPUI. It is for developers who work across many repositories and want a visual commit graph, line-level staging, in-app conflict resolution and undo for every local action, without an Electron app, an account or a subscription. Its main difference: it is native and free, and every Git action is done by the Git already installed on the machine, so the app always agrees with the command line. The mission is a personal, source-available tool (Apache-2.0) with no backend, no telemetry and no network use beyond Git's own.
 
 ## 2. Stack (decided, see Stage 4)
 
@@ -23,12 +23,12 @@ GitTree (working name) is a native desktop Git client for macOS, written in Rust
 | Credentials | None stored. Own binary doubles as `GIT_ASKPASS` / `SSH_ASKPASS` helper over a Unix socket |
 | File watching | `notify` 8.2, debounced 300 ms |
 | Async | GPUI foreground and background executors, `smol` 2 primitives. No tokio |
-| Persistence | JSON files with `serde` 1.0 and `serde_json` in `~/Library/Application Support/GitTree/`, found with `dirs`, written by temp-file-and-rename |
+| Persistence | JSON files with `serde` 1.0 and `serde_json` in `~/Library/Application Support/Safi Git Tree/`, found with `dirs`, written by temp-file-and-rename |
 | Internationalisation | `rust-i18n` 4.2, `locales/en.yml` |
-| Errors and logging | `thiserror` in core, `anyhow` in the app, `tracing` to `~/Library/Logs/GitTree/gittree.log` |
+| Errors and logging | `thiserror` in core, `anyhow` in the app, `tracing` to `~/Library/Logs/Safi Git Tree/gittree.log` |
 | Testing | `cargo test`, real Git in `tempfile` folders, a few headless UI tests, a bench binary |
 | CI | GitHub Actions on `macos-latest`: fmt, clippy with warnings denied, test |
-| Distribution | `cargo-bundle` 0.12 for `GitTree.app`. Signed universal DMG later |
+| Distribution | `cargo-bundle` 0.12 for `Safi Git Tree.app`. Signed universal DMG later |
 | Backend, database, auth, hosting, payments, analytics, AI | None |
 
 ## 3. Architecture and principles
@@ -64,7 +64,7 @@ GitTree (working name) is a native desktop Git client for macOS, written in Rust
        |                         |                       |
        v                         v                       v
    git executable         .git/gittree/           ~/Library/Application
-   (child process)        journal + backups       Support/GitTree/*.json
+   (child process)        journal + backups       Support/Safi Git Tree/*.json
 ```
 
 `RepoState` is the single source of truth for one open repository. Views never run Git and hold no repository data of their own. Every change to a repository goes through `RepoState::run_op`, which queues it, writes the journal entry, runs it through `gittree-core`, and refreshes.
@@ -370,7 +370,7 @@ A throwaway spike of the top risk: can this stack load and draw a 100,000-commit
   - Contrast check of both themes, reduce-motion check, a sweep for hard-coded strings.
   - Network monitor run for FR-SAFE-03. Crash-safety check: kill the app mid-operation and confirm Git can continue.
   - `cargo-bundle` config, app icon, `README.md` (including the `refs/gittree/` namespace and the `.git/gittree/` folder), `LICENSE`, `NOTICE`, `cargo deny check licenses`.
-- **Exit criteria:** every box in section 9 is ticked. `GitTree.app` launches from Finder and is under 40 MB. This is the MVP.
+- **Exit criteria:** every box in section 9 is ticked. `Safi Git Tree.app` launches from Finder and is under 40 MB. This is the MVP.
 
 ### M9: history tools (post-MVP, Should)
 
@@ -504,7 +504,7 @@ Repositories that use worktrees, submodules or LFS must still open and behave co
 5. Parsing Git output. Mitigation: porcelain and `-z` formats, `LC_ALL=C`, the 2.39 minimum, tests with hostile file names.
 6. Credential prompts. Mitigation: the askpass spike is the first task of M6, with a documented fallback.
 7. Untrusted repositories. Mitigation: read-only mode with a fixed set of read commands and every known hook and helper disabled, plus the planted-hook test in M1, extended in M2 with a planted filter and textconv driver.
-8. Name clash: another commercial Git client already uses "GitTree". Mitigation: keep the name in one constant and the bundle metadata, and rename before any public release.
+8. Name clash: resolved. The working name "GitTree" clashed with another commercial Git client, so the product is now "Safi Git Tree" (SGT). The display name lives in one constant and the bundle metadata.
 
 ## 13. Instructions for Claude Code
 

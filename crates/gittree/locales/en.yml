@@ -2,7 +2,7 @@ _version: 1
 
 errors:
   git_not_found: "Git was not found."
-  git_too_old: "This Git is too old. GitTree needs Git 2.39 or newer."
+  git_too_old: "This Git is too old. Safi Git Tree needs Git 2.39 or newer."
   not_a_repository: "This folder is not a Git repository."
   untrusted: "This repository is not trusted yet, so it cannot be changed. Trust it first."
   index_locked: "Another Git process is using this repository. Try again in a moment."
@@ -18,7 +18,7 @@ errors:
   other: "Git reported an error."
 
 git_check:
-  title: "GitTree needs Git"
+  title: "Safi Git Tree needs Git"
   found: "Found: %{version}"
   required: "Git %{version} or newer is required."
   path_label: "Path to the Git program"
@@ -36,7 +36,7 @@ welcome:
   days_ago: "%{count} days ago"
 
 workspace:
-  untrusted: "This repository is read-only because GitTree did not create it. Trust it to make changes and to let its hooks run."
+  untrusted: "This repository is read-only because Safi Git Tree did not create it. Trust it to make changes and to let its hooks run."
   trust: "Trust repository"
   no_commits_title: "No commits yet"
   no_commits_text: "Make the first commit and it will show here."
@@ -78,13 +78,12 @@ settings:
   clone_dir: "Clone folder"
 
 menu:
-  about: "About GitTree"
   settings: "Settings…"
   services: "Services"
-  hide: "Hide GitTree"
+  hide: "Hide Safi Git Tree"
   hide_others: "Hide Others"
   show_all: "Show All"
-  quit: "Quit GitTree"
+  quit: "Quit Safi Git Tree"
   file: "File"
   open: "Open Repository…"
   clone: "Clone Repository…"
@@ -116,3 +115,36 @@ menu:
   window: "Window"
   minimize: "Minimize"
   zoom: "Zoom"
+
+graph:
+  retry: "Retry"
+  load_failed: "The history could not be loaded."
+  head: "HEAD"
+
+sidebar:
+  filter: "Filter"
+  local: "Local"
+  remotes: "Remotes"
+  tags: "Tags"
+  stashes: "Stashes"
+  no_stashes: "No stashes. Stashed changes will show here."
+
+detail:
+  none: "Select a commit to see what it changed."
+  author: "Author"
+  committer: "Committer"
+  commit: "Commit"
+  parents: "Parents"
+  files: "%{count} changed files"
+  no_files: "This commit changed no files."
+  binary: "Binary file. %{old} bytes before, %{new} bytes after."
+  mode_only: "Only the file mode changed."
+  unchanged: "No changes to show."
+  too_large: "This diff has %{lines} lines. Showing the first %{shown}."
+  load_all: "Load all"
+  loading: "Loading…"
+
+search:
+  placeholder: "Search commits, author: or file:"
+  count: "%{at} of %{count}"
+  none: "No commits match."

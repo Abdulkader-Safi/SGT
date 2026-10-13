@@ -5,7 +5,9 @@ use gittree_core::model::{GitVersion, Repository};
 use gittree_core::ops::setup;
 use gittree_core::store::{Persisted, Recent, Session, Settings, Store, TrustList};
 use gittree_core::{GitError, GitErrorKind, GitRunner};
-use gpui_kit::{App, AppContext, Context, EventEmitter, Task};
+use gpui_kit::{App, AppContext, Context, Entity, EventEmitter, Task};
+
+use crate::repo_state::{RepoEvent, RepoState};
 
 /// The app's files as read at launch.
 pub struct Loaded {
@@ -36,12 +38,6 @@ pub enum GitCheck {
     Failed(GitError),
 }
 
-/// The open repository. M2 replaces this with `RepoState`.
-pub struct OpenRepo {
-    pub repository: Repository,
-    pub runner: GitRunner,
-}
-
 pub enum AppEvent {
     /// A Git call failed and the user should hear about it.
     Error(GitError),
@@ -59,7 +55,7 @@ pub struct AppState {
     pub recent: Recent,
     pub trust: TrustList,
     pub git: GitCheck,
-    pub repo: Option<OpenRepo>,
+    pub repo: Option<Entity<RepoState>>,
     /// Opened as soon as Git is ready: the command-line path, or the last
     /// session's repository.
     pending_open: Option<(PathBuf, Quiet)>,
@@ -226,10 +222,16 @@ impl AppState {
         self.save(&self.recent);
         self.session.open_repo = Some(repository.path.clone());
         self.save(&self.session);
-        self.repo = Some(OpenRepo {
-            runner: GitRunner::new(git, &repository.path, repository.trusted),
-            repository,
-        });
+        let runner = GitRunner::new(git, &repository.path, repository.trusted);
+        let repo = cx.new(|cx| RepoState::new(repository, runner, cx));
+        // A view shows these. AppState only passes them on.
+        cx.subscribe(&repo, |_, _, event: &RepoEvent, cx| {
+            if let RepoEvent::Error(error) = event {
+                cx.emit(AppEvent::Error(error.clone()));
+            }
+        })
+        .detach();
+        self.repo = Some(repo);
         cx.notify();
     }
 
@@ -243,13 +245,14 @@ impl AppState {
     /// Trusts the open repository, which lets it be changed and lets its
     /// hooks run. The choice is kept.
     pub fn trust_repo(&mut self, cx: &mut Context<Self>) {
-        let git = self.git_path();
-        let (Some(open), Some(git)) = (&mut self.repo, git) else {
+        let (Some(repo), Some(git)) = (self.repo.clone(), self.git_path()) else {
             return;
         };
-        self.trust.insert(&open.repository.path);
-        open.repository.trusted = true;
-        open.runner = GitRunner::new(git, &open.repository.path, true);
+        let path = repo.read(cx).repository.path.clone();
+        self.trust.insert(&path);
+        repo.update(cx, |repo, cx| {
+            repo.set_trusted(GitRunner::new(git, &path, true), cx)
+        });
         self.save(&self.trust);
         cx.notify();
     }

@@ -48,6 +48,7 @@ struct Shell {
 /// Starts the app on a data folder, as `main` does.
 fn launch(data: &Path, cli_path: Option<PathBuf>, cx: &mut TestAppContext) -> Shell {
     isolate_git();
+    gittree::repo_state::WATCH_FILES.store(false, std::sync::atomic::Ordering::Relaxed);
     let loaded = Loaded::read(Store::new(data));
     let (app, window) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -107,7 +108,8 @@ fn opens_a_repository_untrusted_then_remembers_trust(cx: &mut TestAppContext) {
             .read(cx)
             .repo
             .as_ref()
-            .expect("repository is open");
+            .expect("repository is open")
+            .read(cx);
         assert_eq!(open.repository.path, root);
         assert!(!open.repository.trusted);
         assert!(!open.runner.trusted());
@@ -116,7 +118,7 @@ fn opens_a_repository_untrusted_then_remembers_trust(cx: &mut TestAppContext) {
     // The banner's button trusts it.
     shell.in_window(cx, |window, cx| window.click("trust", cx));
     cx.update(|cx| {
-        let open = shell.app.read(cx).repo.as_ref().unwrap();
+        let open = shell.app.read(cx).repo.as_ref().unwrap().read(cx);
         assert!(open.repository.trusted && open.runner.trusted());
     });
     assert!(shell.in_window(cx, |window, _| window.try_find("trust").is_none()));
@@ -126,7 +128,11 @@ fn opens_a_repository_untrusted_then_remembers_trust(cx: &mut TestAppContext) {
     let shell = launch(data.path(), None, cx);
     cx.update(|cx| {
         let app = shell.app.read(cx);
-        let open = app.repo.as_ref().expect("the session's repository reopens");
+        let open = app
+            .repo
+            .as_ref()
+            .expect("the session's repository reopens")
+            .read(cx);
         assert_eq!(open.repository.path, root);
         assert!(open.repository.trusted);
         assert_eq!(app.recent.repos[0].path, root);
@@ -151,7 +157,8 @@ fn a_plain_folder_gets_an_offer_to_create_a_repository(cx: &mut TestAppContext) 
             .read(cx)
             .repo
             .as_ref()
-            .expect("the new repository is open");
+            .expect("the new repository is open")
+            .read(cx);
         assert!(
             open.repository.trusted,
             "a repository the app created is trusted"
@@ -208,5 +215,83 @@ fn settings_and_the_session_survive_a_restart(cx: &mut TestAppContext) {
         assert_eq!(app.settings.theme, ThemeChoice::Dark);
         assert_eq!(app.settings.ui_font_size, 15.0);
         assert_eq!(app.session.sidebar_width, 300.0);
+    });
+}
+
+#[gpui_kit::test]
+fn browses_history_details_diffs_and_search(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    write("main.rs", "one\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "Start the project"]);
+    git(dir.path(), &["tag", "v0.1"]);
+    write("main.rs", "two\n");
+    write("notes.txt", "hello\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "Add notes"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        assert!(!repo.loading);
+        let summaries: Vec<&str> = repo.history.commits.iter().map(|c| &*c.summary).collect();
+        assert_eq!(summaries, ["Add notes", "Start the project"]);
+        let names: Vec<&str> = repo.refs.iter().map(|r| r.short_name()).collect();
+        assert_eq!(names, ["main", "v0.1"]);
+    });
+
+    // Selecting a commit loads its details, files and the first diff.
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.select_row(0, cx)));
+    cx.run_until_parked();
+    shell.in_window(cx, |_, _| ());
+    cx.update(|cx| {
+        let selection = &repo.read(cx).selection;
+        assert_eq!(selection.details.as_ref().unwrap().message, "Add notes");
+        let files: Vec<String> = selection.files.iter().map(|f| f.path.to_string()).collect();
+        assert_eq!(files, ["main.rs", "notes.txt"]);
+        let diff = selection
+            .diff
+            .as_ref()
+            .expect("the first file's diff is loaded");
+        assert_eq!(diff.hunks[0].lines.len(), 2);
+    });
+
+    // The down arrow moves the selection, and it stops at the last row.
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.move_selection(5, cx)));
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(repo.read(cx).selected_row(), Some(1)));
+
+    // Search by text, then by file through Git.
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.set_search("notes".into(), cx)));
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(repo.read(cx).search.matches, [0]));
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.set_search("file:main.rs".into(), cx)));
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(repo.read(cx).search.matches, [0, 1]));
+
+    // A commit made outside the app shows after a refs refresh, which is
+    // what the file watcher asks for.
+    write("notes.txt", "more\n");
+    git(dir.path(), &["commit", "-q", "-am", "Made in a terminal"]);
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.refresh(gittree::repo_state::Scope::Refs, cx)
+        })
+    });
+    cx.run_until_parked();
+    shell.in_window(cx, |_, _| ());
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        assert_eq!(&*repo.history.commits[0].summary, "Made in a terminal");
+        assert_eq!(repo.history.commits.len(), 3);
+        // The search left "Add notes" selected. It stays selected, now one
+        // row lower.
+        assert_eq!(repo.selected_row(), Some(1));
+        assert_eq!(repo.search.matches, [1, 2]);
     });
 }

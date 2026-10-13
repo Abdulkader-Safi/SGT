@@ -1,4 +1,4 @@
-//! Git access, parsers and graph layout for GitTree. No UI dependency.
+//! Git access, parsers and graph layout for Safi Git Tree. No UI dependency.
 
 pub mod error;
 pub mod graph;

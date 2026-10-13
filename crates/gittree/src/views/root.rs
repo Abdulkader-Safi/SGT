@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use gittree_core::GitError;
-use gittree_core::model::Head;
 use gittree_core::store::WindowState;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
@@ -29,8 +28,8 @@ pub struct RootView {
 
 impl RootView {
     pub fn new(app: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        cx.observe(&app, |this, _, cx| {
-            this.sync_workspace(cx);
+        cx.observe_in(&app, window, |this, _, window, cx| {
+            this.sync_workspace(window, cx);
             crate::theme::apply(cx);
             cx.notify();
         })
@@ -59,28 +58,22 @@ impl RootView {
             workspace: None,
             app,
         };
-        this.sync_workspace(cx);
+        this.sync_workspace(window, cx);
         this
     }
 
     /// Keeps one workspace for the open repository, and none without one.
-    fn sync_workspace(&mut self, cx: &mut Context<Self>) {
-        let open = self.app.read(cx).repo.as_ref().map(|open| {
-            let has_commits = !matches!(open.repository.head, Head::Unborn(_));
-            (
-                open.repository.path.clone(),
-                open.runner.clone(),
-                has_commits,
-            )
-        });
+    fn sync_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let open = self.app.read(cx).repo.clone();
+        let path = open
+            .as_ref()
+            .map(|repo| repo.read(cx).repository.path.clone());
         let shown = self.workspace.as_ref().map(|w| w.read(cx).path.clone());
-        if open.as_ref().map(|(path, ..)| path) == shown.as_ref() {
+        if path == shown {
             return;
         }
         let app = self.app.clone();
-        self.workspace = open.map(|(path, runner, has_commits)| {
-            cx.new(|cx| Workspace::new(app, path, runner, has_commits, cx))
-        });
+        self.workspace = open.map(|repo| cx.new(|cx| Workspace::new(app, repo, window, cx)));
     }
 }
 

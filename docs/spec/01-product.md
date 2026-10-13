@@ -1,4 +1,4 @@
-# GitTree *(working name)*
+# Safi Git Tree (SGT)
 
 Status: signed off 2026-10-12
 
@@ -66,7 +66,7 @@ One year in, Safi has not opened another Git client in months. The repo has a ta
 
 Measurable signals:
 
-- 30 consecutive working days with GitTree as the only Git GUI on Safi's machine.
+- 30 consecutive working days with Safi Git Tree as the only Git GUI on Safi's machine.
 - Zero open bugs that lose user work.
 - The performance numbers in NFR-01 hold on a 100,000-commit repository.
 - At least 10 outside users have filed an issue or a pull request.
@@ -97,4 +97,4 @@ All items below are defaults taken under Safi's blanket sign-off on 2026-10-12. 
 2. **Scope : RESOLVED.** v1 is the local Git client only. Hosting integrations, the AI assistant, the built-in terminal and user accounts are v2 or later. Reason: each needs either a backend or a large separate subsystem, and none is needed to replace a Git client for daily use.
 3. **Platform : RESOLVED.** macOS only for v1, Windows and Linux in v1.1.
 4. **Language : RESOLVED.** English only for v1. Arabic and right-to-left layout are deferred because GPUI Kit's own docs say right-to-left is not automatic and has to be reviewed per screen. All strings still go through the i18n layer so Arabic can be added without touching views.
-5. **Name : RESOLVED for now.** "GitTree" stays as the working name because the folder and the GitHub repo use it. Another commercial Git client already ships under this name, so choose a different one before any public release or download page.
+5. **Name : RESOLVED 2026-10-13.** The product is "Safi Git Tree", short form SGT. It replaces the working name "GitTree", which another commercial Git client already uses. Internal identifiers keep the old spelling: the crates `gittree` and `gittree-core`, the `GITTREE_*` environment variables, `refs/gittree/` and the `.git/gittree/` folder.

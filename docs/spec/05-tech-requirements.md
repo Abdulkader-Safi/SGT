@@ -38,7 +38,7 @@ The engineering blueprint. Tech context: Rust 1.97.1, GPUI through `gpui-kit` 0.
        |                         |                       |
        v                         v                       v
    git executable         .git/gittree/           ~/Library/Application
-   (child process)        journal + backups       Support/GitTree/*.json
+   (child process)        journal + backups       Support/Safi Git Tree/*.json
 ```
 
 The keystone is `RepoState`. It is the single source of truth for one open repository, held in a GPUI entity. Views never run Git and never hold their own copy of repository data. They read `RepoState` and call its methods. Each method starts work on the background executor through `gittree-core`, and when the result comes back on the foreground it updates `RepoState` and notifies observers. Every change to a repository goes through one function, `RepoState::run_op`, which queues it, records the journal entry, runs it, and refreshes. Undo, progress, error reporting, the activity log and the trust check all hang off that one path.
@@ -486,7 +486,7 @@ Shortcuts are GPUI actions bound in one keymap module, so FR-CMD-03 can later lo
 ## Logging and observability
 
 - Logged: app start and version, Git version, each Git command (arguments, duration, exit code, capped stderr), errors with context, watcher start and stop.
-- Where: `~/Library/Logs/GitTree/gittree.log` through `tracing`, plus the in-memory activity list.
+- Where: `~/Library/Logs/Safi Git Tree/gittree.log` through `tracing`, plus the in-memory activity list.
 - Never logged: passwords, tokens, passphrases, credential-dialog input, embedded URL credentials, file contents, diff contents.
 - No remote reporting of any kind.
 
@@ -506,7 +506,7 @@ Shortcuts are GPUI actions bound in one keymap module, so FR-CMD-03 can later lo
 ## Environment and configuration
 
 - `GITTREE_GIT`: path to the Git executable, overriding the setting and PATH. Default unset.
-- `GITTREE_DATA_DIR`: overrides the app data folder. Default `~/Library/Application Support/GitTree`. Used by tests.
+- `GITTREE_DATA_DIR`: overrides the app data folder. Default `~/Library/Application Support/Safi Git Tree`. Used by tests.
 - `GITTREE_LOG`: log level (`error`, `warn`, `info`, `debug`). Default `info`.
 - `GITTREE_ASKPASS_SOCK` and `GITTREE_ASKPASS_TOKEN`: set by the app for its own askpass helper. Never set by users.
 

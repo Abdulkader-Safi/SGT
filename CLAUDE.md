@@ -4,13 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-M0 (the graph performance spike) is done and M1 (the app shell) is built: Git check, welcome screen, open and init, trust, the workspace frame, session restore, menu bar, settings and themes. `PROGRESS.md` lists what M1 still needs checked by hand. M2 is in progress.
+M0 (the graph performance spike) is done and M1 (the app shell) is built: Git check, welcome screen, open and init, trust, the workspace frame, session restore, menu bar, settings and themes. `PROGRESS.md` lists what M1 still needs checked by hand. M2 (graph, sidebar, commit details, diff, search) is built on `RepoState` and also waits on hand checks. Next is M3.
+
+The product is named Safi Git Tree (SGT). Internal identifiers (`gittree` crates and binary, `GITTREE_*` variables, `refs/gittree/`) keep the old working name.
 
 `docs/spec/06-build-spec.md` is the entry point: it is self-contained, and files 01 to 05 are the reasoning behind it. Build milestone by milestone, and follow its section 13.
 
 ## What this is
 
-GitTree (working name) is a native macOS Git client in Rust, rendered with GPUI through the `gpui-kit` crate. v1 is a local client only: no backend, accounts, telemetry, hosting integrations, AI features or terminal. Section 11 of the build spec lists what not to build.
+Safi Git Tree (SGT) is a native macOS Git client in Rust, rendered with GPUI through the `gpui-kit` crate. v1 is a local client only: no backend, accounts, telemetry, hosting integrations, AI features or terminal. Section 11 of the build spec lists what not to build.
 
 ## Commands
 

@@ -2042,10 +2042,12 @@ name = "gittree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "dirs 6.0.0",
  "gittree-core",
  "gpui-kit",
  "libc",
+ "notify",
  "rust-i18n",
  "smol",
  "tempfile",

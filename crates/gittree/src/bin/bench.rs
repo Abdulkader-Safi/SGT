@@ -8,9 +8,12 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gittree::views::graph::{GraphView, load_history};
+use gittree::repo_state::RepoState;
+use gittree::views::graph::GraphView;
 use gittree::window_options;
 use gittree_core::GitRunner;
+use gittree_core::ops::setup;
+use gittree_core::store::TrustList;
 use gpui_kit::{
     AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window,
     WindowOptions, canvas, div, point, px,
@@ -39,6 +42,8 @@ struct Bench {
     repo: PathBuf,
     start: Instant,
     graph: Entity<GraphView>,
+    history: Entity<RepoState>,
+    loaded: Option<Duration>,
     stats: Rc<RefCell<Stats>>,
     _observe: Subscription,
 }
@@ -46,13 +51,17 @@ struct Bench {
 impl Render for Bench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frame_start = Instant::now();
+        let history = self.history.read(cx);
+        let rows = history.history.commits.len();
+        if !history.loading {
+            self.loaded.get_or_insert(self.start.elapsed());
+        }
         let graph = self.graph.read(cx);
-        let rows = graph.row_count();
         let mut stats = self.stats.borrow_mut();
 
         // Scroll only starts once the whole history is in.
         let mut phase = None;
-        if graph.loaded_at.is_some() {
+        if self.loaded.is_some() {
             if stats.frame < FRAMES_PER_PHASE * PHASES.len() {
                 let current = stats.frame / FRAMES_PER_PHASE;
                 stats.offset += PHASES[current].1;
@@ -94,25 +103,19 @@ impl Render for Bench {
 
 impl Bench {
     fn report(&self, stats: &Stats, window: &Window, cx: &Context<Self>) {
-        let graph = self.graph.read(cx);
-        let since_start = |at: Option<Instant>| at.map(|at| at.duration_since(self.start));
         let ms = |time: Option<Duration>| time.map_or(f64::NAN, |t| t.as_secs_f64() * 1e3);
 
         println!("repository        {}", self.repo.display());
-        println!("commits           {}", graph.row_count());
+        println!(
+            "commits           {}",
+            self.history.read(cx).history.commits.len()
+        );
         println!(
             "display refresh   {:.1} ms",
             ms(window.refresh_interval(cx))
         );
-        println!(
-            "first batch       {:.0} ms",
-            ms(since_start(graph.first_batch_at))
-        );
         println!("first rows drawn  {:.0} ms", ms(stats.first_rows));
-        println!(
-            "full load         {:.0} ms",
-            ms(since_start(graph.loaded_at))
-        );
+        println!("full load         {:.0} ms", ms(self.loaded));
         for (phase, (name, step)) in PHASES.iter().enumerate() {
             println!("{name}, {step} px per frame, {FRAMES_PER_PHASE} frames");
             summarise("  app work per frame", &stats.builds[phase]);
@@ -166,9 +169,21 @@ fn main() {
         eprintln!("usage: bench <path to a repository>");
         std::process::exit(2);
     };
+    // The bench is not the app: it opens the repository before the UI starts.
+    let repository =
+        setup::open("git".as_ref(), &repo, &TrustList::default()).unwrap_or_else(|error| {
+            eprintln!("{error}");
+            std::process::exit(1);
+        });
     gpui_kit::application().run(move |cx| {
-        let history = load_history(GitRunner::new("git", &repo, false), cx);
+        let runner = GitRunner::new("git", &repository.path, false);
+        let history = cx.new(|cx| RepoState::new(repository, runner, cx));
         gpui_kit::init(cx);
+        let loaded = gittree::app_state::Loaded::read(gittree_core::store::Store::new(
+            std::env::temp_dir().join("gittree-bench"),
+        ));
+        let app = cx.new(|cx| gittree::app_state::AppState::new(loaded, None, cx));
+        cx.set_global(gittree::app_state::AppStateHandle(app));
         let options = WindowOptions {
             // GPUI slows an unfocused window to 30 frames per second, which
             // would hide the real frame times when the bench is not in front.
@@ -177,13 +192,15 @@ fn main() {
         };
         gpui_kit::open_window(options, cx, |_, cx| {
             cx.new(|cx| {
-                let graph = cx.new(|cx| GraphView::new(history, cx));
+                let graph = cx.new(|cx| GraphView::new(history.clone(), cx));
                 Bench {
                     repo,
                     start,
+                    loaded: None,
                     stats: Default::default(),
-                    _observe: cx.observe(&graph, |_, _, cx| cx.notify()),
+                    _observe: cx.observe(&history, |_, _, cx| cx.notify()),
                     graph,
+                    history,
                 }
             })
         })

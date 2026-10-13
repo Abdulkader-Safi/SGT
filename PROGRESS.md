@@ -14,7 +14,8 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M1: app shell | Built, 45 tests pass. Waiting on the manual checks listed below |
 | M2: graph and read-only browsing | Built, 57 tests pass. Waiting on the manual checks listed below |
 | M3: staging and commit | Built, 81 tests pass. Waiting on the manual checks listed below |
-| M4 to M10 | Not started |
+| M4: branches, tags, stash | Built, 93 tests pass. Waiting on the manual checks listed below |
+| M5 to M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 
 ## M0: de-risk
@@ -300,3 +301,28 @@ Checked by tests: the protocol (initialize, notifications, unknown methods, one 
 - `git_checkout`, `git_stash`, `git_worktree` and branch create and delete, once M4 has those operations.
 - The MCP page in Settings from the design (per-tool switches, the copy-ready client command).
 - The agent activity panel and the approval banner. Both need the server and a running app to talk to each other, which they do not yet: today the server is its own process.
+
+## M4: branches, tags, stash
+
+### What exists
+
+- Core: create, rename and delete a branch, the list of commits only a branch has, checkout of a branch, a remote branch (with a tracking branch) or a commit, plain and annotated tags, and stash push, apply, pop, drop and list. Names and revisions that start with a dash are refused.
+- Undo for checkout, branch create, rename and delete, tag create and delete, stash push and stash drop.
+- App: the Branch and Stash toolbar buttons, Cmd+B and Cmd+Shift+S, "Create branch here" on the detached HEAD banner, right-click menus on sidebar branches, remote branches, tags and stashes and on graph rows, and the dialogs from the design (create and rename branch, delete branch with the named commits and a tick, create and delete tag, stash, drop stash, "Your changes are in the way" with Stash and switch).
+- The sidebar lists every stash, not only the newest.
+
+### Checked by tests
+
+Each core operation with its undo, the unmerged-commit list, the refusal to overwrite local changes, bad names, and an untrusted repository. Through the app: the create-branch dialog with Enter, undo, the blocked checkout followed by Stash and switch, pop, an annotated tag, and deleting a merged branch through its confirmation.
+
+### Still needs a check by hand
+
+- The right-click menus themselves: they are built from the kit's menu and were not clicked in a test.
+- Deleting an unmerged branch: the tick must enable the red button.
+- Checking out a remote branch from the sidebar.
+
+### Not in this milestone
+
+- Pushing a tag and deleting a tag on the remote (FR-BRANCH-04) need the network work of M6.
+- Cherry-pick, revert and reset in the commit menu come with M5.
+- The MCP server does not have `git_checkout`, `git_stash` or branch create and delete yet, though the operations now exist.

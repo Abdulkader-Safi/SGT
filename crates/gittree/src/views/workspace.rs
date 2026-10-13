@@ -4,7 +4,8 @@ use gittree_core::model::Head;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{
-    ResizablePanelEvent, ResizableState, Sizable, h_flex, h_resizable, resizable_panel, v_flex,
+    Disableable, ResizablePanelEvent, ResizableState, Sizable, h_flex, h_resizable,
+    resizable_panel, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -14,6 +15,7 @@ use gpui_kit::{
 use rust_i18n::t;
 
 use super::commit_detail::CommitDetail;
+use super::dialogs;
 use super::graph::GraphView;
 use super::sidebar::Sidebar;
 use super::staging::StagingView;
@@ -21,7 +23,7 @@ use super::ui::{BannerKind, badge, banner, ic};
 use crate::actions::{Commit, FocusChanges, FocusGraph, Refresh, SearchCommits, TrustRepository};
 use crate::app_state::AppState;
 use crate::palette::palette;
-use crate::repo_state::Op;
+use crate::repo_state::{Op, RepoEvent};
 use crate::repo_state::{RepoState, Scope};
 use gpui_kit::component::input::Undo;
 
@@ -86,6 +88,20 @@ impl Workspace {
             },
         )
         .detach();
+        cx.subscribe_in(
+            &repo,
+            window,
+            |_, repo, event: &RepoEvent, window, cx| match event {
+                RepoEvent::ConfirmDeleteBranch { name, lost } => {
+                    dialogs::delete_branch(repo.clone(), name.clone(), lost.clone(), window, cx)
+                }
+                RepoEvent::CheckoutBlocked(target) => {
+                    dialogs::checkout_blocked(repo.clone(), target.clone(), window, cx)
+                }
+                _ => {}
+            },
+        )
+        .detach();
         cx.observe(&app, |_, _, cx| cx.notify()).detach();
         cx.observe(&repo, |_, _, cx| cx.notify()).detach();
         // Coming back to the window: files may have changed meanwhile.
@@ -118,6 +134,21 @@ impl Workspace {
     }
 }
 
+impl Workspace {
+    /// Opens "Create branch", starting at HEAD.
+    fn new_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let repo = self.repo.read(cx);
+        if !repo.repository.trusted || !repo.has_commits() {
+            return;
+        }
+        let label = match &repo.repository.head {
+            Head::Branch(name) | Head::Unborn(name) => name.clone(),
+            Head::Detached(oid) => oid[..7.min(oid.len())].to_owned(),
+        };
+        dialogs::create_branch(self.repo.clone(), "HEAD".into(), label, window, cx);
+    }
+}
+
 impl Render for Workspace {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
@@ -126,6 +157,7 @@ impl Render for Workspace {
         let repo = self.repo.read(cx);
         let trusted = repo.repository.trusted;
         let detached = matches!(repo.repository.head, Head::Detached(_));
+        let (has_commits, has_changes) = (repo.has_commits(), !repo.status.is_empty());
         let head = match &repo.repository.head {
             Head::Branch(name) | Head::Unborn(name) => name.clone(),
             Head::Detached(oid) => t!("workspace.detached", oid = &oid[..7]).into_owned(),
@@ -251,18 +283,40 @@ impl Render for Workspace {
                 ahead,
             )))
             .child(divider())
-            .child(off(tool(
-                "new-branch",
-                "branch",
-                Some(t!("toolbar.branch").into_owned()),
-                None,
-            )))
-            .child(off(tool(
-                "stash",
-                "stash",
-                Some(t!("toolbar.stash").into_owned()),
-                None,
-            )))
+            .child({
+                let button = tool(
+                    "new-branch",
+                    "branch",
+                    Some(t!("toolbar.branch").into_owned()),
+                    None,
+                );
+                if trusted && has_commits {
+                    button
+                        .cursor_pointer()
+                        .hover(|style| style.bg(p.bg_hover))
+                        .on_click(cx.listener(|this, _, window, cx| this.new_branch(window, cx)))
+                } else {
+                    off(button)
+                }
+            })
+            .child({
+                let button = tool(
+                    "stash",
+                    "stash",
+                    Some(t!("toolbar.stash").into_owned()),
+                    None,
+                );
+                if trusted && has_changes {
+                    button
+                        .cursor_pointer()
+                        .hover(|style| style.bg(p.bg_hover))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            dialogs::stash(this.repo.clone(), window, cx)
+                        }))
+                } else {
+                    off(button)
+                }
+            })
             .child(div().flex_1())
             .when(repo.busy, |toolbar| {
                 toolbar.child(
@@ -311,6 +365,13 @@ impl Render for Workspace {
                 t!("workspace.detached_banner").into_owned(),
                 p,
             )
+            .child(
+                Button::new("branch-here")
+                    .small()
+                    .disabled(!trusted)
+                    .label(t!("workspace.branch_here").into_owned())
+                    .on_click(cx.listener(|this, _, window, cx| this.new_branch(window, cx))),
+            )
         });
 
         let right = if repo.selection.wip {
@@ -332,6 +393,14 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &SearchCommits, window, cx| {
                 this.search
                     .update(cx, |search, cx| search.focus(window, cx));
+            }))
+            .on_action(
+                cx.listener(|this, _: &crate::actions::NewBranch, window, cx| {
+                    this.new_branch(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &crate::actions::Stash, window, cx| {
+                dialogs::stash(this.repo.clone(), window, cx)
             }))
             .on_action(cx.listener(|this, _: &FocusGraph, window, cx| {
                 this.graph.read(cx).focus.clone().focus(window, cx);

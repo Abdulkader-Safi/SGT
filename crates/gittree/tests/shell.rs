@@ -410,3 +410,98 @@ fn stages_commits_amends_discards_and_undoes(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(read("a.rs"), edited);
 }
+
+#[gpui_kit::test]
+fn branches_tags_and_stashes_through_the_app(cx: &mut TestAppContext) {
+    use gittree::repo_state::Op;
+    use gittree_core::ops::branch::Target;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+    let git_out = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
+    };
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    git(dir.path(), &["config", "user.name", "Ada"]);
+    git(dir.path(), &["config", "user.email", "ada@example.com"]);
+    write("a.txt", "one\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "first"]);
+    write("a.txt", "two\n");
+    git(dir.path(), &["commit", "-q", "-am", "second"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let run = |cx: &mut TestAppContext, op: Op| {
+        cx.update(|cx| repo.update(cx, |repo, cx| repo.run_op(op, cx)));
+        cx.run_until_parked();
+        shell.in_window(cx, |_, _| ());
+    };
+
+    // New Branch (Cmd+B) opens the dialog. Typing a name and
+    // pressing Enter creates the branch and checks it out.
+    shell.in_window(cx, |window, cx| {
+        window.dispatch_action(Box::new(gittree::actions::NewBranch), cx)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |window, cx| window.input("feature/x", cx));
+    shell.in_window(cx, |window, cx| window.press("enter", cx));
+    assert_eq!(git_out(&["rev-parse", "--abbrev-ref", "HEAD"]), "feature/x");
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        assert!(
+            repo.refs
+                .iter()
+                .any(|r| r.is_current && r.short_name() == "feature/x")
+        );
+    });
+
+    // Undo goes back to main and removes the branch.
+    run(cx, Op::Undo);
+    assert_eq!(git_out(&["rev-parse", "--abbrev-ref", "HEAD"]), "main");
+    assert_eq!(git_out(&["branch", "--list", "feature/x"]), "");
+
+    // A checkout that would overwrite a change asks, and stashing first
+    // gets through.
+    git(dir.path(), &["branch", "old", "HEAD~1"]);
+    write("a.txt", "mine\n");
+    run(cx, Op::Checkout(Target::Branch("old".into())));
+    assert_eq!(git_out(&["rev-parse", "--abbrev-ref", "HEAD"]), "main");
+    assert!(shell.in_window(cx, |window, _| window.try_find("dialog").is_some()));
+    shell.in_window(cx, |window, cx| window.press("enter", cx));
+    assert_eq!(git_out(&["rev-parse", "--abbrev-ref", "HEAD"]), "old");
+    cx.update(|cx| assert_eq!(repo.read(cx).stashes.len(), 1));
+
+    // Pop the stash back on main, tag, then delete the merged branch.
+    run(cx, Op::Checkout(Target::Branch("main".into())));
+    run(cx, Op::StashPop(0));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "mine\n"
+    );
+    cx.update(|cx| assert!(repo.read(cx).stashes.is_empty()));
+    run(
+        cx,
+        Op::CreateTag {
+            name: "v1".into(),
+            at: "HEAD".into(),
+            message: Some("First release".into()),
+        },
+    );
+    assert_eq!(git_out(&["cat-file", "-t", "v1"]), "tag");
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.delete_branch("old".into(), cx)));
+    cx.run_until_parked();
+    shell.in_window(cx, |_, _| ());
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |_, _| ());
+    shell.in_window(cx, |window, cx| window.click("confirm", cx));
+    assert_eq!(git_out(&["branch", "--list", "old"]), "");
+}

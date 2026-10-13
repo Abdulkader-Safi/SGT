@@ -9,8 +9,14 @@ use gpui_kit::{
 };
 use rust_i18n::t;
 
+use gittree_core::ops::branch::Target;
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
+
+use super::dialogs;
 use super::ui::{caption, ic};
+use crate::icons::icon;
 use crate::palette::palette;
+use crate::repo_state::Op;
 use crate::repo_state::RepoState;
 
 const GROUPS: [(RefKind, &str); 4] = [
@@ -100,6 +106,166 @@ impl Sidebar {
                         .child(track),
                 )
             })
+            .context_menu({
+                let repo = self.repo.clone();
+                let (kind, current, target) = (r.kind, r.is_current, r.target.clone());
+                let short = r.short_name().to_owned();
+                move |menu, _, cx| {
+                    let trusted = repo.read(cx).repository.trusted;
+                    let run = |op: Op| {
+                        let repo = repo.clone();
+                        move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut gpui_kit::App| {
+                            repo.update(cx, |repo, cx| repo.run_op(op.clone(), cx))
+                        }
+                    };
+                    let item = |icon_name: &str, key: &str| {
+                        PopupMenuItem::new(t!(key).into_owned()).icon(crate::icons::icon(icon_name))
+                    };
+                    let branch_here = {
+                        let (repo, at, label) = (repo.clone(), target.to_string(), short.clone());
+                        item("branch", "menu_item.create_branch")
+                            .disabled(!trusted)
+                            .on_click(move |_, window, cx| {
+                                dialogs::create_branch(
+                                    repo.clone(),
+                                    at.clone(),
+                                    label.clone(),
+                                    window,
+                                    cx,
+                                )
+                            })
+                    };
+                    match kind {
+                        RefKind::Local => {
+                            let (rename_repo, rename_name) = (repo.clone(), short.clone());
+                            let (delete_repo, delete_name) = (repo.clone(), short.clone());
+                            menu.item(
+                                item("check", "menu_item.checkout")
+                                    .disabled(!trusted || current)
+                                    .on_click(run(Op::Checkout(Target::Branch(short.clone())))),
+                            )
+                            .item(branch_here)
+                            .separator()
+                            .item(
+                                item("file", "menu_item.rename")
+                                    .disabled(!trusted)
+                                    .on_click(move |_, window, cx| {
+                                        dialogs::rename_branch(
+                                            rename_repo.clone(),
+                                            rename_name.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    }),
+                            )
+                            .item(
+                                item("trash", "menu_item.delete_branch")
+                                    .disabled(!trusted || current)
+                                    .on_click(move |_, _, cx| {
+                                        let name = delete_name.clone();
+                                        delete_repo
+                                            .update(cx, |repo, cx| repo.delete_branch(name, cx))
+                                    }),
+                            )
+                        }
+                        RefKind::Remote => menu
+                            .item(
+                                item("check", "menu_item.checkout")
+                                    .disabled(!trusted)
+                                    .on_click(run(Op::Checkout(Target::Remote(short.clone())))),
+                            )
+                            .item(branch_here),
+                        RefKind::Tag => {
+                            let (tag_repo, tag_name) = (repo.clone(), short.clone());
+                            menu.item(
+                                item("check", "menu_item.checkout_commit")
+                                    .disabled(!trusted)
+                                    .on_click(run(Op::Checkout(Target::Commit(target.clone())))),
+                            )
+                            .item(branch_here)
+                            .separator()
+                            .item(
+                                item("trash", "menu_item.delete_tag")
+                                    .disabled(!trusted)
+                                    .on_click(move |_, window, cx| {
+                                        dialogs::delete_tag(
+                                            tag_repo.clone(),
+                                            tag_name.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    }),
+                            )
+                        }
+                        RefKind::Stash => menu,
+                    }
+                }
+            })
+    }
+
+    /// One stash: click to see it, right-click to apply, pop or drop it.
+    fn stash_row(
+        &self,
+        stash: &gittree_core::ops::branch::Stash,
+        selected: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let p = palette(cx);
+        let (repo, oid, index) = (self.repo.clone(), stash.oid.clone(), stash.index);
+        let name: SharedString = stash.message.clone().into();
+        h_flex()
+            .id(("stash", index as usize))
+            .w_full()
+            .h(px(28.))
+            .pl(px(30.))
+            .pr_3()
+            .gap_2()
+            .cursor_pointer()
+            .when(selected, |row| row.bg(p.bg_selected))
+            .when(!selected, |row| row.hover(|style| style.bg(p.bg_hover)))
+            .on_click({
+                let repo = repo.clone();
+                move |_, _, cx| repo.update(cx, |repo, cx| repo.select_oid(&oid, cx))
+            })
+            .child(ic("stash", 14., p.text_tertiary))
+            .child(div().flex_1().truncate().child(name.clone()))
+            .context_menu(move |menu, _, cx| {
+                let trusted = repo.read(cx).repository.trusted;
+                let run = |op: Op| {
+                    let repo = repo.clone();
+                    move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut gpui_kit::App| {
+                        repo.update(cx, |repo, cx| repo.run_op(op.clone(), cx))
+                    }
+                };
+                let (drop_repo, drop_name) = (repo.clone(), name.clone());
+                menu.item(
+                    PopupMenuItem::new(t!("stash.apply").into_owned())
+                        .icon(icon("check"))
+                        .disabled(!trusted)
+                        .on_click(run(Op::StashApply(index))),
+                )
+                .item(
+                    PopupMenuItem::new(t!("stash.pop").into_owned())
+                        .icon(icon("push"))
+                        .disabled(!trusted)
+                        .on_click(run(Op::StashPop(index))),
+                )
+                .separator()
+                .item(
+                    PopupMenuItem::new(t!("menu_item.drop_stash").into_owned())
+                        .icon(icon("trash"))
+                        .disabled(!trusted)
+                        .on_click(move |_, window, cx| {
+                            dialogs::drop_stash(
+                                drop_repo.clone(),
+                                index,
+                                drop_name.clone(),
+                                window,
+                                cx,
+                            )
+                        }),
+                )
+            })
     }
 }
 
@@ -111,11 +277,23 @@ impl Render for Sidebar {
         let selected = repo.selection.oid.clone();
 
         let groups = GROUPS.iter().enumerate().map(|(group, (kind, title))| {
+            let stash_rows = || -> Vec<gpui_kit::AnyElement> {
+                repo.stashes
+                    .iter()
+                    .filter(|stash| {
+                        needle.is_empty() || stash.message.to_lowercase().contains(&needle)
+                    })
+                    .map(|stash| {
+                        let is_selected = selected.as_ref() == Some(&stash.oid);
+                        self.stash_row(stash, is_selected, cx).into_any_element()
+                    })
+                    .collect()
+            };
             let rows: Vec<_> = repo
                 .refs
                 .iter()
                 .enumerate()
-                .filter(|(_, r)| r.kind == *kind)
+                .filter(|(_, r)| r.kind == *kind && r.kind != RefKind::Stash)
                 .filter(|(_, r)| {
                     needle.is_empty() || r.short_name().to_lowercase().contains(&needle)
                 })
@@ -125,6 +303,11 @@ impl Render for Sidebar {
                     self.row(ix, r, is_selected, cx).into_any_element()
                 })
                 .collect();
+            let rows = if *kind == RefKind::Stash {
+                stash_rows()
+            } else {
+                rows
+            };
             let collapsed = self.collapsed[group];
             let count = rows.len();
             let empty_stashes =

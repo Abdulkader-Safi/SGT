@@ -13,10 +13,15 @@ use gpui_kit::{
 use rust_i18n::t;
 
 use super::graph_element::{LANE_WIDTH, ROW_HEIGHT, graph_cell};
+use gittree_core::ops::branch::Target;
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
+
+use super::dialogs;
 use super::ui::{RefLabel, badge, big_icon, caption, empty_state, ref_label};
 use crate::actions::FocusChanges;
 use crate::local_time;
 use crate::palette::{Palette, palette};
+use crate::repo_state::Op;
 use crate::repo_state::{RepoEvent, RepoState, Scope};
 
 /// Rows a Page Up or Page Down moves.
@@ -256,6 +261,16 @@ impl Render for GraphView {
                                 )
                                 .font_family(mono(cx)),
                             )
+                            .context_menu({
+                                let repo = this.repo.clone();
+                                let oid = commit.oid.clone();
+                                let label = format!(
+                                    "{}  {}",
+                                    &commit.oid[..7.min(commit.oid.len())],
+                                    commit.summary
+                                );
+                                move |menu, _, cx| commit_menu(menu, &repo, &oid, &label, cx)
+                            })
                     })
                     .collect()
             }),
@@ -344,6 +359,65 @@ impl Render for GraphView {
             .child(div().flex_1().overflow_hidden().child(body))
             .into_any_element()
     }
+}
+
+/// The right-click menu of a commit (FR-GRAPH-08). Cherry-pick, revert and
+/// reset join it with the merge milestone.
+fn commit_menu(
+    menu: PopupMenu,
+    repo: &Entity<RepoState>,
+    oid: &gittree_core::model::Oid,
+    label: &str,
+    cx: &App,
+) -> PopupMenu {
+    let trusted = repo.read(cx).repository.trusted;
+    let item = |icon_name: &str, key: &str| {
+        PopupMenuItem::new(t!(key).into_owned()).icon(crate::icons::icon(icon_name))
+    };
+    let (checkout_repo, checkout_oid) = (repo.clone(), oid.clone());
+    let (branch_repo, branch_at, branch_label) = (repo.clone(), oid.to_string(), label.to_owned());
+    let (tag_repo, tag_at, tag_label) = (repo.clone(), oid.to_string(), label.to_owned());
+    let copied = oid.to_string();
+    menu.item(
+        item("check", "menu_item.checkout_commit")
+            .disabled(!trusted)
+            .on_click(move |_, _, cx| {
+                let op = Op::Checkout(Target::Commit(checkout_oid.clone()));
+                checkout_repo.update(cx, |repo, cx| repo.run_op(op, cx))
+            }),
+    )
+    .item(
+        item("branch", "menu_item.create_branch")
+            .disabled(!trusted)
+            .on_click(move |_, window, cx| {
+                dialogs::create_branch(
+                    branch_repo.clone(),
+                    branch_at.clone(),
+                    branch_label.clone(),
+                    window,
+                    cx,
+                )
+            }),
+    )
+    .item(
+        item("tag", "menu_item.create_tag")
+            .disabled(!trusted)
+            .on_click(move |_, window, cx| {
+                dialogs::create_tag(
+                    tag_repo.clone(),
+                    tag_at.clone(),
+                    tag_label.clone(),
+                    window,
+                    cx,
+                )
+            }),
+    )
+    .separator()
+    .item(
+        item("copy", "menu_item.copy_hash").on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copied.clone()))
+        }),
+    )
 }
 
 /// The font for hashes, line numbers and code.

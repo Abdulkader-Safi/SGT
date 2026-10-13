@@ -16,12 +16,13 @@ Early development. What works today:
 - Staging: whole files, single hunks or chosen lines. Unstage and discard the same way, with a confirmation before anything is discarded.
 - Commit and amend, with the message kept as a draft until it is used.
 - Inline and split diffs with syntax colours for 19 languages.
-- Undo for the last commit or discard.
+- Branches, tags and stashes: create, rename, delete, check out, with right-click menus and dialogs.
+- Undo for commits, discards, checkouts, and branch, tag and stash changes.
 - An MCP server (`gittree mcp`), so a coding agent can read status, history, diffs and blame, and stage and commit when you allow it.
 - The view updates by itself when the repository changes on disk.
 - Settings, light and dark themes, and the window layout restored at launch.
 
-Not built yet: branch and tag actions, stash, merge and rebase, conflict resolution, clone, fetch, pull, push, and undo for more than commits and discards. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
+Not built yet: merge and rebase, conflict resolution, clone, fetch, pull, push, redo. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
 
 ## Requirements
 

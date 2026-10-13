@@ -10,6 +10,7 @@ use gittree_core::model::{
     Change, Commit, CommitDetails, FileChange, FileDiff, Head, Oid, Ref, RepoPath, Repository,
     StatusEntry,
 };
+use gittree_core::ops::branch::{self, Stash, Target as Checkout};
 use gittree_core::ops::read;
 use gittree_core::ops::stage::{self, Target};
 use gittree_core::patch::{self, Lines};
@@ -40,6 +41,13 @@ pub enum RepoEvent {
     HeadMessage(String),
     /// Something the user should read, already in plain words.
     Notice(String),
+    /// Deleting this branch needs a yes: these commits are only on it.
+    ConfirmDeleteBranch {
+        name: String,
+        lost: Vec<(Oid, String)>,
+    },
+    /// Local changes are in the way of this checkout.
+    CheckoutBlocked(Checkout),
 }
 
 /// A change to the repository. `RepoState::run_op` is the only way to make
@@ -62,7 +70,37 @@ pub enum Op {
         message: String,
         amend: bool,
     },
-    /// Takes back the last commit or discard.
+    Checkout(Checkout),
+    /// Stashes everything, then checks out. For when local changes are in
+    /// the way.
+    StashAndSwitch(Checkout),
+    CreateBranch {
+        name: String,
+        at: String,
+        checkout: bool,
+    },
+    RenameBranch {
+        old: String,
+        new: String,
+    },
+    DeleteBranch {
+        name: String,
+        force: bool,
+    },
+    CreateTag {
+        name: String,
+        at: String,
+        message: Option<String>,
+    },
+    DeleteTag(String),
+    StashPush {
+        message: String,
+        include_untracked: bool,
+    },
+    StashApply(u32),
+    StashPop(u32),
+    StashDrop(u32),
+    /// Takes back the last undoable action.
     Undo,
 }
 
@@ -149,6 +187,7 @@ pub struct RepoState {
     pub selection: Selection,
     pub search: Search,
     pub status: Vec<StatusEntry>,
+    pub stashes: Vec<Stash>,
     /// An op is running. Views grey out their buttons meanwhile.
     pub busy: bool,
     ops: VecDeque<Op>,
@@ -187,6 +226,7 @@ impl RepoState {
             selection: Selection::default(),
             search: Search::default(),
             status: Vec::new(),
+            stashes: Vec::new(),
             busy: false,
             ops: VecDeque::new(),
             journal,
@@ -432,6 +472,10 @@ impl RepoState {
         let (runner, journal) = (self.runner.clone(), self.journal.clone());
         let has_commits = self.has_commits();
         let label = op_label(&op);
+        let checkout = match &op {
+            Op::Checkout(target) => Some(target.clone()),
+            _ => None,
+        };
         let run =
             cx.background_spawn(async move { execute(op, &runner, &journal, has_commits, label) });
         self.op_task = cx.spawn(async move |this, cx| {
@@ -448,10 +492,31 @@ impl RepoState {
                         // What was queued behind a failed op was chosen
                         // against a state that did not come about.
                         this.ops.clear();
-                        cx.emit(RepoEvent::Error(error));
+                        match checkout {
+                            Some(target) if error.kind == GitErrorKind::DirtyWorkTree => {
+                                cx.emit(RepoEvent::CheckoutBlocked(target))
+                            }
+                            _ => cx.emit(RepoEvent::Error(error)),
+                        }
                     }
                 }
                 this.next_op(cx);
+            });
+        });
+    }
+
+    /// Deletes a branch. One with commits of its own is not deleted here:
+    /// the view is asked to confirm first, naming those commits.
+    pub fn delete_branch(&mut self, name: String, cx: &mut Context<Self>) {
+        let runner = self.runner.clone();
+        let branch_name = name.clone();
+        let check =
+            cx.background_spawn(async move { branch::unmerged_commits(&runner, &branch_name) });
+        self.message_task = cx.spawn(async move |this, cx| {
+            let lost = check.await;
+            let _ = this.update(cx, |_, cx| match lost {
+                Ok(lost) => cx.emit(RepoEvent::ConfirmDeleteBranch { name, lost }),
+                Err(error) => cx.emit(RepoEvent::Error(error)),
             });
         });
     }
@@ -480,13 +545,21 @@ impl RepoState {
     fn refresh_refs(&mut self, quiet_log: bool, cx: &mut Context<Self>) {
         let runner = self.runner.clone();
         let read = cx.background_spawn(async move {
-            Ok::<_, GitError>((read::list_refs(&runner)?, read::head(&runner)?))
+            Ok::<_, GitError>((
+                read::list_refs(&runner)?,
+                read::head(&runner)?,
+                branch::list_stashes(&runner).unwrap_or_default(),
+            ))
         });
         // Replacing the task drops an older read that is still running.
         self.refs_task = cx.spawn(async move |this, cx| {
             let result = read.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok((refs, head)) => {
+                Ok((refs, head, stashes)) => {
+                    if stashes != this.stashes {
+                        this.stashes = stashes;
+                        cx.notify();
+                    }
                     if refs == this.refs && head == this.repository.head {
                         return;
                     }
@@ -794,7 +867,29 @@ fn op_label(op: &Op) -> String {
             let path = path.map(ToString::to_string).unwrap_or_default();
             t!("journal.discard_lines", path = path).into_owned()
         }
-        Op::Stage(_) | Op::Unstage(_) | Op::Undo => String::new(),
+        Op::Checkout(target) | Op::StashAndSwitch(target) => {
+            t!("journal.checkout", target = target_name(target)).into_owned()
+        }
+        Op::CreateBranch { name, .. } => t!("journal.create_branch", name = name).into_owned(),
+        Op::RenameBranch { old, new } => {
+            t!("journal.rename_branch", old = old, new = new).into_owned()
+        }
+        Op::DeleteBranch { name, .. } => t!("journal.delete_branch", name = name).into_owned(),
+        Op::CreateTag { name, .. } => t!("journal.create_tag", name = name).into_owned(),
+        Op::DeleteTag(name) => t!("journal.delete_tag", name = name).into_owned(),
+        Op::StashPush { .. } => t!("journal.stash_push").into_owned(),
+        Op::StashDrop(_) => t!("journal.stash_drop").into_owned(),
+        Op::Stage(_) | Op::Unstage(_) | Op::Undo | Op::StashApply(_) | Op::StashPop(_) => {
+            String::new()
+        }
+    }
+}
+
+/// A checkout target in words.
+pub fn target_name(target: &Checkout) -> String {
+    match target {
+        Checkout::Branch(name) | Checkout::Remote(name) => name.clone(),
+        Checkout::Commit(oid) => oid[..7.min(oid.len())].to_owned(),
     }
 }
 
@@ -859,6 +954,100 @@ fn execute(
             };
             journaled(action, &|| {
                 stage::commit(runner, &message, amend).map(Done::Committed)
+            })
+        }
+        Op::Checkout(target) => {
+            let action = Action::Checkout {
+                target: target_name(&target),
+            };
+            journaled(action, &|| {
+                branch::checkout(runner, &target).map(|()| Done::Changed)
+            })
+        }
+        Op::StashAndSwitch(target) => {
+            let stash = Action::StashPush {
+                message: label.clone(),
+                include_untracked: true,
+            };
+            journaled(stash, &|| {
+                branch::stash_push(runner, &label, true).map(|()| Done::Changed)
+            })?;
+            let action = Action::Checkout {
+                target: target_name(&target),
+            };
+            journaled(action, &|| {
+                branch::checkout(runner, &target).map(|()| Done::Changed)
+            })
+        }
+        Op::CreateBranch { name, at, checkout } => {
+            let action = Action::CreateBranch {
+                name: name.clone(),
+                at: at.clone(),
+                checkout,
+            };
+            journaled(action, &|| {
+                branch::create_branch(runner, &name, &at, checkout).map(|()| Done::Changed)
+            })
+        }
+        Op::RenameBranch { old, new } => {
+            let action = Action::RenameBranch {
+                old: old.clone(),
+                new: new.clone(),
+            };
+            journaled(action, &|| {
+                branch::rename_branch(runner, &old, &new).map(|()| Done::Changed)
+            })
+        }
+        Op::DeleteBranch { name, force } => {
+            let action = Action::DeleteBranch {
+                name: name.clone(),
+                force,
+            };
+            journaled(action, &|| {
+                branch::delete_branch(runner, &name, force).map(|()| Done::Changed)
+            })
+        }
+        Op::CreateTag { name, at, message } => {
+            let action = Action::CreateTag {
+                name: name.clone(),
+                at: at.clone(),
+                message: message.clone(),
+            };
+            journaled(action, &|| {
+                branch::create_tag(runner, &name, &at, message.as_deref()).map(|()| Done::Changed)
+            })
+        }
+        Op::DeleteTag(name) => {
+            let action = Action::DeleteTag { name: name.clone() };
+            journaled(action, &|| {
+                branch::delete_tag(runner, &name).map(|()| Done::Changed)
+            })
+        }
+        Op::StashPush {
+            message,
+            include_untracked,
+        } => {
+            let action = Action::StashPush {
+                message: message.clone(),
+                include_untracked,
+            };
+            journaled(action, &|| {
+                branch::stash_push(runner, &message, include_untracked).map(|()| Done::Changed)
+            })
+        }
+        Op::StashApply(index) => branch::stash_apply(runner, index).map(|()| Done::Changed),
+        Op::StashPop(index) => branch::stash_pop(runner, index).map(|()| Done::Changed),
+        Op::StashDrop(index) => {
+            let stashes = branch::list_stashes(runner)?;
+            let Some(stash) = stashes.into_iter().find(|stash| stash.index == index) else {
+                return Ok(Done::Changed);
+            };
+            let action = Action::StashDrop {
+                oid: stash.oid,
+                message: stash.message,
+            };
+            journaled(action, &|| {
+                branch::stash_drop(runner, index).map(|()| Done::Changed)
             })
         }
         Op::Undo => {

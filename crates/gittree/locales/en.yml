@@ -54,6 +54,7 @@ workspace:
   no_commits_text: "Make the first commit and it will show here."
   detached: "Detached at %{oid}"
   detached_banner: "You are on a detached HEAD. New commits here belong to no branch."
+  branch_here: "Create branch here"
 
 toolbar:
   fetch: "Fetch"
@@ -240,8 +241,75 @@ journal:
   commit: "Commit \"%{summary}\""
   discard_files: "Discard changes in %{count} files"
   discard_lines: "Discard lines in %{path}"
+  checkout: "Check out %{target}"
+  create_branch: "Create branch %{name}"
+  rename_branch: "Rename %{old} to %{new}"
+  delete_branch: "Delete branch %{name}"
+  create_tag: "Create tag %{name}"
+  delete_tag: "Delete tag %{name}"
+  stash_push: "Stash changes"
+  stash_drop: "Drop a stash"
 
 undo:
   nothing: "Nothing to undo."
   done: "Undone: %{label}"
   blocked: "Cannot undo \"%{label}\" because the repository changed since then."
+
+branch:
+  create_title: "Create branch"
+  create: "Create branch"
+  name: "Name"
+  name_hint: "feature/…"
+  start_at: "Start at"
+  checkout_new: "Check out the new branch"
+  rename_title: "Rename branch"
+  rename_text: "Renames %{name} on this Mac. A branch on a remote keeps its name until you push."
+  new_name: "New name"
+  rename: "Rename"
+  delete_title: "Delete %{name}?"
+  delete_merged: "It is fully merged, so no commits are lost. Undo brings the branch back."
+  delete_unmerged: "These %{count} commits are only on this branch. They will be out of reach once it is gone. Undo brings the branch back."
+  and_more: "and %{count} more"
+  understood: "I understand these commits will be lost"
+  delete: "Delete branch"
+
+tag:
+  create_title: "Create tag"
+  create: "Create tag"
+  name_hint: "v1.0"
+  at: "At"
+  message: "Message (optional)"
+  message_hint: ""
+  message_help: "With a message the tag is annotated."
+  delete_title: "Delete tag %{name}?"
+  delete_text: "The commit stays. Only the name is removed. Undo brings it back."
+  delete: "Delete tag"
+
+stash:
+  title: "Stash changes"
+  text: "Puts your %{count} changed files aside and leaves a clean working tree."
+  message: "Message (optional)"
+  untracked: "Include untracked files"
+  action: "Stash"
+  drop_title: "Drop this stash?"
+  drop_text: "%{name} will be removed. Undo brings it back."
+  drop: "Drop stash"
+  apply: "Apply"
+  pop: "Pop"
+
+checkout:
+  blocked_title: "Your changes are in the way"
+  blocked_text: "Switching to %{target} would overwrite files you have changed."
+  stash_and_switch: "Stash and switch"
+  stash_help: "Stash and switch puts your changes aside first. Pop the stash when you come back."
+
+menu_item:
+  checkout: "Checkout"
+  checkout_commit: "Checkout this commit"
+  create_branch: "Create branch here…"
+  create_tag: "Create tag here…"
+  rename: "Rename…"
+  delete_branch: "Delete branch…"
+  delete_tag: "Delete tag…"
+  copy_hash: "Copy hash"
+  drop_stash: "Drop…"

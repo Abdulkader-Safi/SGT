@@ -184,6 +184,8 @@ pub fn highlight(diff: &FileDiff, language: &str, theme: &HighlightTheme) -> Vec
 /// unstaged or discarded (FR-DIFF-01 to 03, FR-DIFF-09, FR-STAGE-02 to 04).
 pub struct DiffPane {
     repo: Entity<RepoState>,
+    /// Shows the diff of the file view's picked commit, not the selection's.
+    of_file_view: bool,
     scroll: UniformListScrollHandle,
     /// The diff and the view (split or not) the state below was made for.
     /// Holding the diff keeps its address from being reused by the next one.
@@ -205,6 +207,7 @@ impl DiffPane {
         cx.observe(&repo, |_, _, cx| cx.notify()).detach();
         Self {
             repo,
+            of_file_view: false,
             scroll: UniformListScrollHandle::new(),
             seen: None,
             rows: Default::default(),
@@ -216,7 +219,20 @@ impl DiffPane {
         }
     }
 
+    /// A pane for the file view's history: the diff of the picked commit.
+    // ponytail: "Load all" on a cut diff still reloads the selection's
+    // diff, so a huge diff stays cut here.
+    pub fn for_file_view(repo: Entity<RepoState>, cx: &mut Context<Self>) -> Self {
+        Self {
+            of_file_view: true,
+            ..Self::new(repo, cx)
+        }
+    }
+
     fn origin(&self, cx: &Context<Self>) -> Origin {
+        if self.of_file_view {
+            return Origin::Commit;
+        }
         let selection = &self.repo.read(cx).selection;
         match &selection.wip_file {
             Some((_, true)) if selection.wip => Origin::Staged,
@@ -398,12 +414,17 @@ impl Render for DiffPane {
             px(settings.diff_font_size),
         );
         let repo = self.repo.read(cx);
-        let (loading, busy) = (repo.selection.diff_loading, repo.busy);
+        let (shown, loading) = match (&repo.file_view, self.of_file_view) {
+            (Some(view), true) => (view.diff.clone(), view.diff_loading),
+            (None, true) => (None, false),
+            (_, false) => (repo.selection.diff.clone(), repo.selection.diff_loading),
+        };
+        let busy = repo.busy;
         let trusted = repo.repository.trusted;
         let note = |icon: &str, title: String, text: String| {
             empty_state(icon, title, text, palette).into_any_element()
         };
-        let Some(diff) = repo.selection.diff.clone() else {
+        let Some(diff) = shown else {
             return if loading {
                 note("fetch", String::new(), t!("detail.loading").into_owned())
             } else {

@@ -21,6 +21,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9 and M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
+| M12: blame, file history, worktrees, agent sessions | Blame and file history built, 146 tests pass. Worktrees and agent sessions not started |
 
 ## M0: de-risk
 
@@ -475,3 +476,26 @@ All three systems pass fmt, clippy and every test as of commit `Port step 4`. Ge
 - Launching `Safi Git Tree.app` from Finder. The app is not signed, so the first launch needs a right-click and "Open".
 - A network monitor run while browsing, to confirm what the dependency check says.
 - `tree-sitter-graphql` has no licence field in its manifest (its LICENSE file is MIT). `cargo deny` warns about it. It comes in through the kit even though the app does not use that grammar.
+
+## M12: blame, file history, worktrees and agent sessions
+
+### Blame and file history (built)
+
+- `ops::file::blame` reads `git blame --porcelain` and `ops::file::history` reads `git log --follow` with the name and status of the file in each commit. Both have parser tests and one test against a real repository with a rename.
+- In the commit details, "Blame" and "History" above the file list open the file view for the selected file, as the selected commit has it. The view has the design's Diff, Blame and History switch. Diff goes back to the commit details.
+- Blame names each commit on the first line of its run, with a colour bar per commit. A click picks the commit, and the footer has "Show commit", which selects it in the graph.
+- History lists the commits that changed the file, with "renamed from" where it moved. Picking one shows what it did to the file in a diff pane below.
+- `shows_blame_and_history_of_a_file` covers the state through the app.
+
+### Differences from the design
+
+- Blame and history start from a commit's file list only. There is no way in from the staging view or the command palette yet.
+- Blame code has no syntax colours.
+- The file's history stops at 500 commits, with no "load more".
+- "Load all" on a cut diff does nothing useful in the history's diff pane.
+- The view has not been looked at on screen. The headless test renders it without error.
+
+### Not started
+
+- Worktrees: list, add, remove.
+- Agent sessions in a new worktree on a new branch.

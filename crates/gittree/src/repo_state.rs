@@ -11,6 +11,7 @@ use gittree_core::model::{
     StatusEntry,
 };
 use gittree_core::ops::branch::{self, Stash, Target as Checkout};
+use gittree_core::ops::file::{self, BlameLine, FileCommit};
 use gittree_core::ops::merge::{self, InProgressOp, OpKind, ResetMode, Side};
 use gittree_core::ops::read;
 use gittree_core::ops::remote::{self, Progress, Remote};
@@ -302,6 +303,33 @@ pub struct Selection {
     pub diff_loading: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileMode {
+    Blame,
+    History,
+}
+
+/// One file over time, shown in place of the commit details: its blame
+/// or its history, as the file is in the commit `rev` (FR-AGENT-03).
+pub struct FileView {
+    pub rev: Oid,
+    pub path: RepoPath,
+    pub mode: FileMode,
+    /// `None` until read. Each is read the first time its mode shows.
+    pub blame: Option<Arc<Vec<BlameLine>>>,
+    pub history: Option<Arc<Vec<FileCommit>>>,
+    /// The commit of the clicked blame line or history row.
+    pub picked: Option<Oid>,
+    /// What the picked history row did to the file.
+    pub diff: Option<Arc<FileDiff>>,
+    pub diff_loading: bool,
+}
+
+/// How many commits a file's history lists.
+// ponytail: a fixed cap with no "load more". Raise it or page it if a
+// file with more history than this turns up.
+const FILE_HISTORY_LIMIT: usize = 500;
+
 #[derive(Default)]
 pub struct Search {
     pub query: String,
@@ -327,6 +355,8 @@ pub struct RepoState {
     /// Indexes into `refs`, by the commit each points at.
     pub refs_at: HashMap<Oid, Vec<usize>>,
     pub selection: Selection,
+    pub file_view: Option<FileView>,
+    file_task: Task<()>,
     pub search: Search,
     pub status: Vec<StatusEntry>,
     pub stashes: Vec<Stash>,
@@ -412,6 +442,8 @@ impl RepoState {
             details_task: Task::ready(()),
             diff_task: Task::ready(()),
             search_task: Task::ready(()),
+            file_view: None,
+            file_task: Task::ready(()),
         };
         this.refresh(Scope::All, cx);
         // Old journal entries go once per open, quietly.
@@ -537,6 +569,7 @@ impl RepoState {
             wip: true,
             ..Default::default()
         };
+        self.file_view = None;
         self.details_task = Task::ready(());
         self.diff_task = Task::ready(());
         self.after_commit = None;
@@ -1040,6 +1073,7 @@ impl RepoState {
             oid: oid.clone(),
             ..Default::default()
         };
+        self.file_view = None;
         self.after_commit = None;
         self.diff_task = Task::ready(());
         cx.notify();
@@ -1140,6 +1174,138 @@ impl RepoState {
                 this.selection.diff_loading = false;
                 match result {
                     Ok(diff) => this.set_diff(diff),
+                    Err(error) => cx.emit(RepoEvent::Error(error)),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// Shows the blame or the history of the selected commit's selected
+    /// file, as that commit has it.
+    pub fn show_file(&mut self, mode: FileMode, cx: &mut Context<Self>) {
+        let file = self
+            .selection
+            .file
+            .and_then(|ix| self.selection.files.get(ix));
+        let (Some(rev), Some(file)) = (self.selection.oid.clone(), file) else {
+            return;
+        };
+        match &mut self.file_view {
+            Some(view) => view.mode = mode,
+            None => {
+                self.file_view = Some(FileView {
+                    rev,
+                    path: file.path.clone(),
+                    mode,
+                    blame: None,
+                    history: None,
+                    picked: None,
+                    diff: None,
+                    diff_loading: false,
+                })
+            }
+        }
+        cx.notify();
+        let view = self.file_view.as_ref().expect("set above");
+        let loaded = match mode {
+            FileMode::Blame => view.blame.is_some(),
+            FileMode::History => view.history.is_some(),
+        };
+        if loaded {
+            return;
+        }
+        let (runner, rev, path) = (self.runner.clone(), view.rev.clone(), view.path.clone());
+        let read = cx.background_spawn({
+            let (rev, path) = (rev.clone(), path.clone());
+            async move {
+                Ok::<_, GitError>(match mode {
+                    FileMode::Blame => (Some(file::blame(&runner, &rev, &path)?), None),
+                    FileMode::History => (
+                        None,
+                        Some(file::history(&runner, &rev, &path, FILE_HISTORY_LIMIT)?),
+                    ),
+                })
+            }
+        });
+        self.file_task = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(view) = this.file_view.as_mut() else {
+                    return;
+                };
+                if view.rev != rev || view.path != path {
+                    return;
+                }
+                // A failed read shows as an empty list, with the error.
+                let (blame, history) = result.unwrap_or_else(|error| {
+                    cx.emit(RepoEvent::Error(error));
+                    match mode {
+                        FileMode::Blame => (Some(Vec::new()), None),
+                        FileMode::History => (None, Some(Vec::new())),
+                    }
+                });
+                if let Some(blame) = blame {
+                    view.blame = Some(Arc::new(blame));
+                }
+                if let Some(history) = history {
+                    view.history = Some(Arc::new(history));
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// Back to the commit details and the diff.
+    pub fn close_file_view(&mut self, cx: &mut Context<Self>) {
+        self.file_view = None;
+        self.file_task = Task::ready(());
+        cx.notify();
+    }
+
+    /// Marks the commit of a clicked blame line.
+    pub fn pick_blame_commit(&mut self, oid: Oid, cx: &mut Context<Self>) {
+        if let Some(view) = self.file_view.as_mut() {
+            view.picked = Some(oid);
+            cx.notify();
+        }
+    }
+
+    /// Marks a history row and reads what that commit did to the file.
+    pub fn pick_file_commit(&mut self, row: usize, cx: &mut Context<Self>) {
+        let Some(view) = self.file_view.as_mut() else {
+            return;
+        };
+        let Some(entry) = view
+            .history
+            .as_ref()
+            .and_then(|list| list.get(row))
+            .cloned()
+        else {
+            return;
+        };
+        let oid = entry.commit.oid.clone();
+        view.picked = Some(oid.clone());
+        view.diff = None;
+        view.diff_loading = true;
+        cx.notify();
+        let runner = self.runner.clone();
+        let read = cx.background_spawn({
+            let oid = oid.clone();
+            async move { read::diff_commit_file(&runner, &oid, &entry.file, false) }
+        });
+        self.diff_task = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(view) = this.file_view.as_mut() else {
+                    return;
+                };
+                if view.picked.as_ref() != Some(&oid) {
+                    return;
+                }
+                view.diff_loading = false;
+                match result {
+                    Ok(diff) => view.diff = Some(Arc::new(diff)),
                     Err(error) => cx.emit(RepoEvent::Error(error)),
                 }
                 cx.notify();

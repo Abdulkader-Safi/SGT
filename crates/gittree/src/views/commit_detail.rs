@@ -12,7 +12,7 @@ use super::graph::mono;
 use super::ui::{caption, empty_state, ic, status_mark};
 use crate::local_time;
 use crate::palette::palette;
-use crate::repo_state::RepoState;
+use crate::repo_state::{FileMode, RepoState};
 
 /// The selected commit: its header, the files it changed and the diff of
 /// one of them (FR-GRAPH-07).
@@ -188,19 +188,45 @@ impl Render for CommitDetail {
                     }),
             );
 
+        let file_link = |id: &'static str, mode: FileMode| {
+            let repo = self.repo.clone();
+            let label = match mode {
+                FileMode::Blame => t!("file.blame"),
+                FileMode::History => t!("file.history"),
+            };
+            div()
+                .id(id)
+                .cursor_pointer()
+                .text_size(px(12.))
+                .text_color(p.accent)
+                .child(label.into_owned())
+                .on_click(move |_, _, cx| repo.update(cx, |repo, cx| repo.show_file(mode, cx)))
+        };
         let files = v_flex()
             .id("files")
             .max_h(px(180.))
             .border_b_1()
             .border_color(p.border)
-            .child(h_flex().h(px(28.)).px_3().child(caption(
-                if selection.files.is_empty() {
-                    t!("detail.no_files").into_owned()
-                } else {
-                    t!("detail.files", count = selection.files.len()).to_uppercase()
-                },
-                p,
-            )))
+            .child(
+                h_flex()
+                    .h(px(28.))
+                    .px_3()
+                    .gap_3()
+                    .child(caption(
+                        if selection.files.is_empty() {
+                            t!("detail.no_files").into_owned()
+                        } else {
+                            t!("detail.files", count = selection.files.len()).to_uppercase()
+                        },
+                        p,
+                    ))
+                    .child(div().flex_1())
+                    // Blame and history are of the selected file.
+                    .when(selection.file.is_some(), |row| {
+                        row.child(file_link("blame", FileMode::Blame))
+                            .child(file_link("history", FileMode::History))
+                    }),
+            )
             .children(selection.files.iter().enumerate().map(|(ix, file)| {
                 let repo = self.repo.clone();
                 let path = match &file.orig_path {

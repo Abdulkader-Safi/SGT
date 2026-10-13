@@ -874,3 +874,58 @@ fn undo_redo_snapshots_and_the_palette(cx: &mut TestAppContext) {
         "from-palette"
     );
 }
+
+/// FR-AGENT-03: blame and history of the selected commit's file, each drawn
+/// once, and gone when another commit is selected.
+#[gpui_kit::test]
+fn shows_blame_and_history_of_a_file(cx: &mut TestAppContext) {
+    use gittree::repo_state::FileMode;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    write("old.rs", "one\ntwo\nthree\nfour\nfive\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "Start"]);
+    git(dir.path(), &["mv", "old.rs", "new.rs"]);
+    git(dir.path(), &["commit", "-q", "-m", "Move it"]);
+    write("new.rs", "one\nTWO\nthree\nfour\nfive\n");
+    git(dir.path(), &["commit", "-q", "-am", "Shout"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.select_row(0, cx)));
+    cx.run_until_parked();
+
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.show_file(FileMode::Blame, cx)));
+    cx.run_until_parked();
+    shell.in_window(cx, |_, _| ());
+    cx.update(|cx| {
+        let view = repo.read(cx).file_view.as_ref().unwrap();
+        let blame = view.blame.as_ref().unwrap();
+        let summaries: Vec<&str> = blame.iter().map(|line| &*line.summary).collect();
+        assert_eq!(summaries, ["Start", "Shout", "Start", "Start", "Start"]);
+    });
+
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.show_file(FileMode::History, cx)));
+    cx.run_until_parked();
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.pick_file_commit(1, cx)));
+    cx.run_until_parked();
+    shell.in_window(cx, |_, _| ());
+    cx.update(|cx| {
+        let view = repo.read(cx).file_view.as_ref().unwrap();
+        let history = view.history.as_ref().unwrap();
+        let summaries: Vec<&str> = history.iter().map(|c| &*c.commit.summary).collect();
+        assert_eq!(summaries, ["Shout", "Move it", "Start"]);
+        // The blame read earlier is kept.
+        assert!(view.blame.is_some());
+        let diff = view.diff.as_ref().expect("the picked commit's diff");
+        assert_eq!(diff.old_path.as_ref().unwrap().to_string(), "old.rs");
+    });
+
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.select_row(2, cx)));
+    cx.run_until_parked();
+    cx.update(|cx| assert!(repo.read(cx).file_view.is_none()));
+}

@@ -169,6 +169,15 @@ sidebar:
   stashes: "Stashes"
   no_stashes: "No stashes. Stashed changes will show here."
 
+file:
+  diff: "Diff"
+  blame: "Blame"
+  history: "History"
+  show_commit: "Show commit"
+  renamed_from: "renamed from %{path}"
+  no_blame: "There are no lines to blame. The file may be binary, empty or deleted by this commit."
+  no_history: "No commit before this one changed this file."
+  history_hint: "Pick a commit to see what it did to this file."
 detail:
   none: "Select a commit to see what it changed."
   author: "Author"

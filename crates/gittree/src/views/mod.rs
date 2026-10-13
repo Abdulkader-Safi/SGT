@@ -2,6 +2,7 @@ pub mod commit_detail;
 pub mod conflict;
 pub mod dialogs;
 pub mod diff;
+pub mod file_view;
 pub mod git_check;
 pub mod graph;
 pub mod graph_element;

@@ -17,6 +17,7 @@ use rust_i18n::t;
 use super::commit_detail::CommitDetail;
 use super::conflict::ConflictView;
 use super::dialogs;
+use super::file_view::FileViewPanel;
 use super::graph::GraphView;
 use super::sidebar::Sidebar;
 use super::staging::StagingView;
@@ -39,6 +40,7 @@ pub struct Workspace {
     sidebar: Entity<Sidebar>,
     graph: Entity<GraphView>,
     detail: Entity<CommitDetail>,
+    file_view: Entity<FileViewPanel>,
     staging: Entity<StagingView>,
     conflict: Entity<ConflictView>,
     search: Entity<InputState>,
@@ -113,6 +115,7 @@ impl Workspace {
             path: repo.read(cx).repository.path.clone(),
             sidebar: cx.new(|cx| Sidebar::new(repo.clone(), window, cx)),
             detail: cx.new(|cx| CommitDetail::new(repo.clone(), cx)),
+            file_view: cx.new(|cx| FileViewPanel::new(repo.clone(), cx)),
             staging: cx.new(|cx| StagingView::new(app.clone(), repo.clone(), window, cx)),
             conflict: cx.new(|cx| ConflictView::new(repo.clone(), window, cx)),
             graph,
@@ -556,6 +559,8 @@ impl Render for Workspace {
             self.conflict.clone().into_any_element()
         } else if repo.selection.wip {
             self.staging.clone().into_any_element()
+        } else if repo.file_view.is_some() {
+            self.file_view.clone().into_any_element()
         } else {
             self.detail.clone().into_any_element()
         };

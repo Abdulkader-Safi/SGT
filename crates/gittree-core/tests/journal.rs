@@ -285,3 +285,43 @@ fn prune_drops_old_entries_with_their_refs_and_backups() {
     assert!(journal.entries().is_empty());
     assert_eq!(r.git(1, &["for-each-ref", &snapshot_ref]), "");
 }
+
+/// NFR-09: the app dies between an action and its journal entry. The
+/// repository is sound, the next action is journaled as usual, and the
+/// work the action destroyed is still in the snapshot ref.
+#[test]
+fn a_kill_in_the_middle_of_an_action_leaves_a_repository_git_can_use() {
+    let r = repo();
+    let runner = r.runner(true);
+    let journal = Journal::new(&r.path().join(".git"));
+    r.write("a.txt", b"work in progress\n");
+    let target = r.git(1, &["rev-parse", "HEAD~1"]);
+    let reset = Action::Reset {
+        target: target.clone(),
+        mode: ResetMode::Hard,
+    };
+    let pending = journal.begin(&runner, reset, "test".into()).unwrap();
+    merge::reset(&runner, &target, ResetMode::Hard).unwrap();
+    // The kill: `finish` never runs.
+    drop(pending);
+
+    r.git(1, &["fsck", "--strict"]);
+    assert_eq!(r.git(1, &["status", "--porcelain"]), "");
+    let journal = Journal::new(&r.path().join(".git"));
+    assert!(journal.entries().is_empty());
+    let saved = r.git(1, &["for-each-ref", "refs/gittree/snapshots"]);
+    assert_eq!(saved.lines().count(), 1, "{saved}");
+
+    let before = state(&r);
+    r.write("a.txt", b"edited\n");
+    let discard = Action::DiscardFiles {
+        tracked: vec!["a.txt".into()],
+        untracked: Vec::new(),
+    };
+    let entry = act(&r, discard, |g| {
+        stage::discard_files(g, &["a.txt".into()], &[], true)
+    });
+    assert_eq!(state(&r), before);
+    journal.undo(&runner, &entry).unwrap();
+    assert_eq!(r.read("a.txt"), b"edited\n");
+}

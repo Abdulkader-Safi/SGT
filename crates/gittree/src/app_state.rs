@@ -45,6 +45,23 @@ pub enum AppEvent {
     NotARepository(PathBuf),
     /// Something to tell the user, already in plain words.
     Notice(String),
+    /// Git or ssh asks for a user name, password or passphrase.
+    Credential(crate::repo_state::CredentialRequest),
+}
+
+/// A clone that is running, or that failed and waits for another try.
+pub struct CloneJob {
+    pub url: String,
+    pub dest: PathBuf,
+    pub progress: Option<gittree_core::ops::remote::Progress>,
+    pub error: Option<GitError>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CloneJob {
+    pub fn running(&self) -> bool {
+        self.error.is_none()
+    }
 }
 
 type SaveJob = Box<dyn FnOnce(&Store) + Send>;
@@ -58,6 +75,7 @@ pub struct AppState {
     pub trust: TrustList,
     pub git: GitCheck,
     pub repo: Option<Entity<RepoState>>,
+    pub clone: Option<CloneJob>,
     /// Opened as soon as Git is ready: the command-line path, or the last
     /// session's repository.
     pending_open: Option<(PathBuf, Quiet)>,
@@ -116,6 +134,7 @@ impl AppState {
             trust,
             git: GitCheck::Checking,
             repo: None,
+            clone: None,
             pending_open,
             session_changed: false,
             saves,
@@ -215,6 +234,126 @@ impl AppState {
         .detach();
     }
 
+    /// Clones `url` into `dest`, then opens it as a trusted repository.
+    /// Progress and a failure show in `self.clone`.
+    pub fn clone_repo(&mut self, url: String, dest: PathBuf, cx: &mut Context<Self>) {
+        use gittree_core::askpass;
+        use gittree_core::ops::remote;
+        use std::sync::atomic::Ordering;
+
+        let Some(git) = self.git_path() else {
+            return;
+        };
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.clone = Some(CloneJob {
+            url: url.clone(),
+            dest: dest.clone(),
+            progress: None,
+            error: None,
+            cancel: cancel.clone(),
+        });
+        cx.notify();
+
+        let (progress, updates) = smol::channel::unbounded();
+        let (ask, questions) = smol::channel::unbounded();
+        let prompts = crate::repo_state::PROMPTS.load(Ordering::Relaxed);
+        // Without a listener the sender is kept, so the channel stays open.
+        let (server, keep) = if prompts {
+            let stop = cancel.clone();
+            let server = askpass::Server::start(move |question| {
+                let (reply, answer) = std::sync::mpsc::channel();
+                let request = crate::repo_state::CredentialRequest {
+                    question: question.to_owned(),
+                    secret: askpass::is_secret(question),
+                    reply,
+                };
+                ask.send_blocking(request).ok()?;
+                let answer = answer.recv().ok().flatten();
+                if answer.is_none() {
+                    stop.store(true, Ordering::Relaxed);
+                }
+                answer
+            });
+            (server.ok(), None)
+        } else {
+            (None, Some(ask))
+        };
+        let cloned = cx.background_spawn({
+            let dest = dest.clone();
+            async move {
+                let _keep = keep;
+                let env = match (&server, std::env::current_exe()) {
+                    (Some(server), Ok(exe)) => server.env(&exe),
+                    _ => Vec::new(),
+                };
+                let parent = dest.parent().unwrap_or(&dest).to_owned();
+                std::fs::create_dir_all(&parent).ok();
+                // Cloning makes a new repository, so there is no trust to check yet.
+                let runner = GitRunner::new(&git, &parent, true);
+                remote::clone(&runner, &url, &dest, &env, &cancel, |update| {
+                    let _ = progress.send_blocking(update);
+                })
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            enum Message {
+                Progress(remote::Progress),
+                Question(crate::repo_state::CredentialRequest),
+            }
+            let listen = async {
+                loop {
+                    let message = smol::future::or(
+                        async { updates.recv().await.ok().map(Message::Progress) },
+                        async { questions.recv().await.ok().map(Message::Question) },
+                    )
+                    .await;
+                    let Some(message) = message else { return };
+                    let _ = this.update(cx, |this, cx| match message {
+                        Message::Progress(update) => {
+                            if let Some(job) = &mut this.clone {
+                                job.progress = Some(update);
+                                cx.notify();
+                            }
+                        }
+                        Message::Question(request) => cx.emit(AppEvent::Credential(request)),
+                    });
+                }
+            };
+            let (result, ()) = smol::future::zip(cloned, listen).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => {
+                        this.clone = None;
+                        // The app made this repository, so it is trusted.
+                        let path = dest.canonicalize().unwrap_or(dest);
+                        this.trust.insert(&path);
+                        this.save(&this.trust);
+                        this.open(path, cx);
+                    }
+                    Err(error) if error.kind == GitErrorKind::Cancelled => this.clone = None,
+                    Err(error) => {
+                        if let Some(job) = &mut this.clone {
+                            job.error = Some(error);
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Stops a running clone, or dismisses one that failed.
+    pub fn cancel_clone(&mut self, cx: &mut Context<Self>) {
+        match &self.clone {
+            Some(job) if job.running() => {
+                job.cancel.store(true, std::sync::atomic::Ordering::Relaxed)
+            }
+            _ => self.clone = None,
+        }
+        cx.notify();
+    }
+
     fn show(&mut self, repository: Repository, cx: &mut Context<Self>) {
         let Some(git) = self.git_path() else {
             return;
@@ -230,6 +369,7 @@ impl AppState {
         cx.subscribe(&repo, |_, _, event: &RepoEvent, cx| match event {
             RepoEvent::Error(error) => cx.emit(AppEvent::Error(error.clone())),
             RepoEvent::Notice(text) => cx.emit(AppEvent::Notice(text.clone())),
+            RepoEvent::Credential(request) => cx.emit(AppEvent::Credential(request.clone())),
             _ => {}
         })
         .detach();

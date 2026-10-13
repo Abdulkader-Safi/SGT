@@ -24,11 +24,18 @@ pub struct RootView {
     git_check: Entity<GitCheckView>,
     welcome: Entity<WelcomeView>,
     workspace: Option<Entity<Workspace>>,
+    cloning: bool,
 }
 
 impl RootView {
     pub fn new(app: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        cx.observe_in(&app, window, |this, _, window, cx| {
+        cx.observe_in(&app, window, |this, app, window, cx| {
+            // The clone dialog stays open for progress, and goes when the
+            // clone is through.
+            let cloning = app.read(cx).clone.is_some();
+            if std::mem::replace(&mut this.cloning, cloning) && !cloning {
+                window.close_dialog(cx);
+            }
             this.sync_workspace(window, cx);
             crate::theme::apply(cx);
             cx.notify();
@@ -40,6 +47,9 @@ impl RootView {
             |_, app, event: &AppEvent, window, cx| match event {
                 AppEvent::Error(error) => show_error(error.clone(), window, cx),
                 AppEvent::NotARepository(path) => offer_init(app.clone(), path.clone(), window, cx),
+                AppEvent::Credential(request) => {
+                    super::dialogs::credential(request.clone(), window, cx)
+                }
                 AppEvent::Notice(text) => {
                     window.push_notification(Notification::info(text.clone()), cx)
                 }
@@ -59,6 +69,7 @@ impl RootView {
             git_check: cx.new(|cx| GitCheckView::new(app.clone(), window, cx)),
             welcome: cx.new(|cx| WelcomeView::new(app.clone(), cx)),
             workspace: None,
+            cloning: false,
             app,
         };
         this.sync_workspace(window, cx);
@@ -194,6 +205,11 @@ impl Render for RootView {
             .size_full()
             .bg(p.bg_app)
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(drop_target))
+            .on_action(
+                cx.listener(|this, _: &crate::actions::CloneRepository, window, cx| {
+                    super::dialogs::clone_repository(this.app.clone(), window, cx)
+                }),
+            )
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 // AppState reports a path that is not a repository folder.
                 if let Some(path) = paths.paths().first().cloned() {

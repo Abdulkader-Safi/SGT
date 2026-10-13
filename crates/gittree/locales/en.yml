@@ -385,3 +385,44 @@ conflict:
   left: "%{count} conflicts left"
   mark_resolved: "Mark resolved"
   open: "Resolve conflicts"
+
+sync:
+  no_remote: "This repository has no remote yet. Add one from the Remotes group in the sidebar."
+  nothing_to_force: "This branch is not on the remote yet. A normal push will publish it."
+  pushed: "Pushed %{branch} to %{remote}."
+  cancel: "Cancel"
+
+credential:
+  title: "Sign in"
+  note: "Nothing typed here is stored or logged. It goes to Git once and is dropped."
+  ok: "Continue"
+
+push:
+  force_title: "Force-push %{branch}?"
+  force_text: "The remote branch has %{count} commits your branch does not. They will be replaced. The push is refused if the remote moved since your last fetch."
+  force: "Force-push"
+  force_item: "Force-push…"
+  tag: "Push tag"
+  delete_remote_tag: "Delete tag on the remote"
+
+remote:
+  add_title: "Add remote"
+  edit_title: "Edit remote"
+  add: "Add remote"
+  save: "Save"
+  url: "URL"
+  url_help: "HTTPS, SSH or a local path."
+  remove_title: "Remove remote %{name}?"
+  remove_text: "Its remote branches disappear from the sidebar. Nothing on the server changes."
+  remove: "Remove remote"
+  add_item: "Add remote…"
+  edit_item: "Edit %{name}…"
+  remove_item: "Remove %{name}…"
+
+clone:
+  title: "Clone repository"
+  url: "Repository URL"
+  dest: "Clone into"
+  dest_help: "A folder named after the repository is made inside."
+  action: "Clone"
+  starting: "Starting"

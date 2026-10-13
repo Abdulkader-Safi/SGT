@@ -176,6 +176,7 @@ pub fn pull(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Pushes a branch. `set_upstream` publishes a branch that has none.
 /// `lease` force-pushes, but only if the remote branch is still at that
 /// commit: Git refuses when someone else pushed meanwhile.

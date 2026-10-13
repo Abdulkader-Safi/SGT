@@ -49,6 +49,7 @@ struct Shell {
 fn launch(data: &Path, cli_path: Option<PathBuf>, cx: &mut TestAppContext) -> Shell {
     isolate_git();
     gittree::repo_state::WATCH_FILES.store(false, std::sync::atomic::Ordering::Relaxed);
+    gittree::repo_state::PROMPTS.store(false, std::sync::atomic::Ordering::Relaxed);
     let loaded = Loaded::read(Store::new(data));
     let (app, window) = cx.update(|cx| {
         gpui_kit::init(cx);
@@ -590,4 +591,178 @@ fn a_conflicting_merge_is_resolved_in_the_app(cx: &mut TestAppContext) {
     run(cx, Op::Undo);
     assert_eq!(git_out(&["rev-parse", "HEAD"]), before);
     assert_eq!(read("f.txt"), "one\nMAIN\nthree\n");
+}
+
+/// The askpass spike (M6): Git asks through this app's binary, the question
+/// reaches the listener, and the answer goes back to Git.
+#[test]
+fn git_gets_credentials_through_the_askpass_helper() {
+    use gittree_core::askpass::{Server, is_secret};
+    use std::io::Write as _;
+
+    isolate_git();
+    let server = Server::start(|question| {
+        Some(if is_secret(question) { "s3cret" } else { "ada" }.to_owned())
+    })
+    .unwrap();
+    let helper = std::path::Path::new(env!("CARGO_BIN_EXE_gittree"));
+    let mut child = Command::new("git")
+        .args(["-c", "credential.helper=", "credential", "fill"])
+        .envs(server.env(helper))
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"protocol=https\nhost=example.com\n\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("username=ada") && text.contains("password=s3cret"),
+        "{text}"
+    );
+
+    // Once the listener is gone nothing hangs: Git just fails.
+    let env = server.env(helper);
+    drop(server);
+    let mut child = Command::new("git")
+        .args(["-c", "credential.helper=", "credential", "fill"])
+        .envs(env)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"protocol=https\nhost=example.com\n\n")
+        .unwrap();
+    assert!(!child.wait().unwrap().success());
+}
+
+#[gpui_kit::test]
+fn pushes_fetches_pulls_and_clones_through_the_app(cx: &mut TestAppContext) {
+    use gittree::repo_state::Op;
+    use gittree_core::store::PullMode;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let origin = tempfile::tempdir().unwrap();
+    let url = origin.path().to_str().unwrap().to_owned();
+    let git_in = |folder: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(folder)
+            .args(["-c", "user.name=Bo", "-c", "user.email=bo@example.com"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
+    };
+    isolate_git();
+    git_in(origin.path(), &["init", "-q", "--bare", "-b", "main"]);
+    git_in(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+    git_in(dir.path(), &["add", "-A"]);
+    git_in(dir.path(), &["commit", "-q", "-m", "first"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    // Network commands run on real threads: give them time, then let the
+    // app take in the result.
+    let run = |cx: &mut TestAppContext, op: Op| {
+        cx.update(|cx| repo.update(cx, |repo, cx| repo.run_op(op, cx)));
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if !cx.update(|cx| repo.read(cx).busy) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        cx.run_until_parked();
+    };
+
+    run(
+        cx,
+        Op::AddRemote {
+            name: "origin".into(),
+            url: url.clone(),
+        },
+    );
+    cx.update(|cx| assert_eq!(repo.read(cx).remotes[0].fetch_url, url));
+
+    // The first push publishes the branch and sets its upstream.
+    run(cx, Op::Push { force: false });
+    assert_eq!(
+        git_in(
+            dir.path(),
+            &["rev-parse", "--abbrev-ref", "main@{upstream}"]
+        ),
+        "origin/main"
+    );
+    assert_eq!(
+        git_in(origin.path(), &["rev-parse", "main"]),
+        git_in(dir.path(), &["rev-parse", "main"])
+    );
+
+    // Someone else pushes. Fetch shows it as behind, Pull brings it in.
+    let other = tempfile::tempdir().unwrap();
+    git_in(other.path(), &["clone", "-q", &url, "."]);
+    std::fs::write(other.path().join("b.txt"), "theirs\n").unwrap();
+    git_in(other.path(), &["add", "-A"]);
+    git_in(other.path(), &["commit", "-q", "-m", "theirs"]);
+    git_in(other.path(), &["push", "-q", "origin", "main"]);
+    run(cx, Op::Fetch);
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        let main = repo.refs.iter().find(|r| r.is_current).unwrap();
+        assert_eq!((main.ahead, main.behind), (0, 1));
+    });
+    run(cx, Op::Pull(PullMode::FfOnly));
+    assert!(dir.path().join("b.txt").exists());
+
+    // Clone opens the new repository, trusted.
+    let dest = tempfile::tempdir().unwrap();
+    let target = dest.path().join("copy");
+    cx.update(|cx| {
+        shell.app.update(cx, |app, cx| {
+            app.clone_repo(url.clone(), target.clone(), cx)
+        })
+    });
+    for _ in 0..200 {
+        cx.run_until_parked();
+        if cx.update(|cx| shell.app.read(cx).clone.is_none()) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    for _ in 0..50 {
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    cx.update(|cx| {
+        let open = shell.app.read(cx).repo.as_ref().unwrap().read(cx);
+        assert_eq!(open.repository.path, target.canonicalize().unwrap());
+        assert!(open.repository.trusted);
+    });
+    assert!(target.join("b.txt").exists());
 }

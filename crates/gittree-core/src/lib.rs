@@ -1,5 +1,6 @@
 //! Git access, parsers and graph layout for Safi Git Tree. No UI dependency.
 
+pub mod askpass;
 pub mod error;
 pub mod graph;
 pub mod journal;

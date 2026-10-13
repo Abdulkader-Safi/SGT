@@ -16,7 +16,8 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M3: staging and commit | Built, 81 tests pass. Waiting on the manual checks listed below |
 | M4: branches, tags, stash | Built, 93 tests pass. Waiting on the manual checks listed below |
 | M5: merge, rebase, conflicts | Built, 103 tests pass. Waiting on the manual checks listed below |
-| M6 to M10 | Not started |
+| M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
+| M7 to M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 
 ## M0: de-risk
@@ -352,3 +353,34 @@ Each core operation against real Git, with undo: a forced merge commit, a confli
 
 - The conflict view shows one result box for the whole file, not a preview of only the conflicted lines.
 - Region blocks show plain text, without line numbers or syntax colours.
+
+## M6: remotes and sync
+
+### The askpass spike (first task)
+
+It works, with no fallback needed. Git and ssh are pointed at the app's own binary through `GIT_ASKPASS` and `SSH_ASKPASS`. Started that way the binary only passes the question over a Unix socket to the running app and prints the answer. The socket sits in a folder only the user can enter (mode 0700, socket 0600), exists only while a network command runs, and answers only a caller that knows a one-time token. A test runs real `git credential fill` through it and gets the user name and password back, and shows that Git fails instead of hanging once the listener is gone.
+
+### What exists
+
+- Core: a network runner that streams Git's progress lines and, on cancel, sends SIGTERM to the whole process group and SIGKILL after 2 seconds. Remote add, rename, edit and remove. Fetch with prune, pull in three modes, push that publishes a branch with no upstream, force-push with a lease on the commit last fetched, tag push and delete, and clone that removes a partial folder. URLs using the `ext::` or `fd::` transports are refused.
+- App: the Fetch, Pull and Push toolbar buttons with ahead and behind counts, Cmd+Shift+F, L and K, progress with Git's phase text and a Cancel button, the credential dialog, the force-push confirmation, add, edit and remove remote from the Remotes group menu, push and delete of a tag on the remote, and Clone from the Welcome screen with progress, cancel and an error to retry from.
+- A clone is trusted when it finishes, because the app made it.
+- A pull that stops on conflicts opens the conflict view like a merge does.
+
+### Checked by tests
+
+Against a bare repository on disk: remotes, publish, fetch, pull, a push that is behind (refused as non-fast-forward), a lease that is stale (refused) and one that holds, pull refusing to fast-forward and then rebasing, tags, clone with a missing source, a non-empty destination, a forbidden URL and a cancel. Through the app: add remote, push, fetch showing "behind 1", pull, and clone opening the result trusted.
+
+### Not checked: needs a real server
+
+No test talks to a real host. Please try by hand:
+
+- An HTTPS remote that asks for a password, and an SSH key with a passphrase. The dialog should appear, and Cancel should stop the command.
+- Cancel on a slow clone or fetch: Git should stop within 2 seconds.
+- A force-push to a real remote.
+
+### Deviations
+
+- The force-push dialog says how many commits will be replaced. It does not list them.
+- Push does not ask which remote to use: it takes the upstream's remote, else `origin`, else the only one.
+- Headless tests switch the credential listener off, as they do the file watcher, because both answer from their own threads and GPUI's test scheduler does not allow that.

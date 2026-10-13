@@ -24,7 +24,14 @@ fn setup() -> Setup {
     let origin = tempfile::tempdir().unwrap();
     repo.git(
         1,
-        &["init", "-q", "--bare", "-b", "main", origin.path().to_str().unwrap()],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.path().to_str().unwrap(),
+        ],
     );
     Setup { origin, repo }
 }
@@ -56,7 +63,7 @@ fn pushed_by_someone_else(setup: &Setup, file: &str) {
     }
 }
 
-const NO_CANCEL: AtomicBool = AtomicBool::new(false);
+static NO_CANCEL: AtomicBool = AtomicBool::new(false);
 
 #[test]
 fn remotes_are_added_renamed_edited_and_removed() {

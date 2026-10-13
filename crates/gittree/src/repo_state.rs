@@ -13,9 +13,11 @@ use gittree_core::model::{
 use gittree_core::ops::branch::{self, Stash, Target as Checkout};
 use gittree_core::ops::merge::{self, InProgressOp, OpKind, ResetMode, Side};
 use gittree_core::ops::read;
+use gittree_core::ops::remote::{self, Progress, Remote};
 use gittree_core::ops::stage::{self, Target};
 use gittree_core::parse::conflict::{Choice, Region, parse_conflicts, resolve};
 use gittree_core::patch::{self, Lines};
+use gittree_core::store::PullMode;
 use gittree_core::{GitError, GitErrorKind, GitRunner};
 use gpui_kit::{AppContext, Context, EventEmitter, Task};
 use notify::Watcher;
@@ -50,6 +52,8 @@ pub enum RepoEvent {
     },
     /// Local changes are in the way of this checkout.
     CheckoutBlocked(Checkout),
+    /// Git or ssh asks for a user name, password or passphrase.
+    Credential(CredentialRequest),
 }
 
 /// A change to the repository. `RepoState::run_op` is the only way to make
@@ -132,8 +136,65 @@ pub enum Op {
         path: RepoPath,
         side: Side,
     },
+    Fetch,
+    Pull(PullMode),
+    /// Pushes the current branch. `force` uses a lease on the commit the
+    /// remote branch had at the last fetch.
+    Push {
+        force: bool,
+    },
+    PushTag {
+        tag: String,
+        delete: bool,
+    },
+    AddRemote {
+        name: String,
+        url: String,
+    },
+    RenameRemote {
+        old: String,
+        new: String,
+    },
+    SetRemoteUrl {
+        name: String,
+        url: String,
+    },
+    RemoveRemote(String),
     /// Takes back the last undoable action.
     Undo,
+}
+
+impl Op {
+    /// The four commands that talk to a remote.
+    fn uses_network(&self) -> bool {
+        matches!(
+            self,
+            Op::Fetch | Op::Pull(_) | Op::Push { .. } | Op::PushTag { .. }
+        )
+    }
+}
+
+/// A question from Git or ssh that the user has to answer. Sending `None`
+/// cancels it.
+#[derive(Clone)]
+pub struct CredentialRequest {
+    pub question: String,
+    pub secret: bool,
+    pub reply: std::sync::mpsc::Sender<Option<String>>,
+}
+
+/// What a network op needs besides the runner.
+struct Net {
+    env: remote::NetEnv,
+    cancel: Arc<AtomicBool>,
+    progress: smol::channel::Sender<Progress>,
+    pull_mode: PullMode,
+    /// The current branch, its remote, and the commit its upstream is at.
+    branch: Option<(String, String, Option<Oid>)>,
+    /// Held so the socket lives as long as the command.
+    _askpass: Option<gittree_core::askpass::Server>,
+    /// Keeps the question channel open when there is no listener.
+    _ask: Option<smol::channel::Sender<CredentialRequest>>,
 }
 
 /// The conflicted file open in the conflict view.
@@ -237,6 +298,11 @@ pub struct RepoState {
     pub search: Search,
     pub status: Vec<StatusEntry>,
     pub stashes: Vec<Stash>,
+    pub remotes: Vec<Remote>,
+    /// What a running network command last reported, and how to stop it.
+    pub progress: Option<Progress>,
+    pub net_running: bool,
+    net_cancel: Arc<AtomicBool>,
     /// A merge, rebase, cherry-pick or revert stopped part way.
     pub in_progress: Option<InProgressOp>,
     /// The conflict view shows in place of the staging view.
@@ -253,6 +319,7 @@ pub struct RepoState {
     /// from the work-in-progress row to this commit.
     after_commit: Option<Oid>,
     op_task: Task<()>,
+    net_task: Task<()>,
     status_task: Task<()>,
     message_task: Task<()>,
     // A result is dropped unless its generation is still the current one.
@@ -284,6 +351,10 @@ impl RepoState {
             search: Search::default(),
             status: Vec::new(),
             stashes: Vec::new(),
+            remotes: Vec::new(),
+            progress: None,
+            net_running: false,
+            net_cancel: Default::default(),
             in_progress: None,
             resolving: false,
             conflict: None,
@@ -294,6 +365,7 @@ impl RepoState {
             journal,
             after_commit: None,
             op_task: Task::ready(()),
+            net_task: Task::ready(()),
             status_task: Task::ready(()),
             message_task: Task::ready(()),
             log_generation: 0,
@@ -553,16 +625,19 @@ impl RepoState {
             _ => None,
         };
         let git_dir = self.repository.git_dir.clone();
+        let net = self.net_for(&op, cx);
         if let Op::ResolveFile { path, .. } | Op::ResolveSide { path, .. } = &op {
             self.resolved.push(path.clone());
             self.conflict = None;
         }
         let run = cx.background_spawn(async move {
-            execute(op, &runner, &journal, &git_dir, has_commits, label)
+            execute(op, &runner, &journal, &git_dir, has_commits, label, &net)
         });
         self.op_task = cx.spawn(async move |this, cx| {
             let result = run.await;
             let _ = this.update(cx, |this, cx| {
+                this.net_running = false;
+                this.progress = None;
                 match result {
                     Ok(Done::Changed) => {}
                     Ok(Done::Conflict) => {
@@ -591,6 +666,118 @@ impl RepoState {
                 this.next_op(cx);
             });
         });
+    }
+
+    /// The current branch with the remote it pushes to and the commit its
+    /// upstream was at when last fetched.
+    fn push_target(&self) -> Option<(String, String, Option<Oid>)> {
+        let current = self.refs.iter().find(|r| r.is_current)?;
+        let upstream = current.upstream.as_deref();
+        // "refs/remotes/origin/main" names the remote.
+        let remote = upstream
+            .and_then(|name| name.strip_prefix("refs/remotes/"))
+            .and_then(|rest| rest.split('/').next())
+            .map(str::to_owned)
+            .or_else(|| {
+                let names = self.remotes.iter().map(|remote| remote.name.clone());
+                let mut names: Vec<String> = names.collect();
+                let origin = names.iter().position(|name| name == "origin");
+                origin
+                    .map(|ix| names.swap_remove(ix))
+                    .or_else(|| names.pop())
+            })?;
+        let seen = upstream.and_then(|name| {
+            self.refs
+                .iter()
+                .find(|r| r.name == name)
+                .map(|r| r.target.clone())
+        });
+        Some((current.short_name().to_owned(), remote, seen))
+    }
+
+    /// Sets up what a network op needs: the askpass listener, a way to
+    /// cancel, and a channel for progress. Other ops get an empty one.
+    fn net_for(&mut self, op: &Op, cx: &mut Context<Self>) -> Net {
+        let (progress, updates) = smol::channel::unbounded::<Progress>();
+        let mut net = Net {
+            env: Vec::new(),
+            cancel: Default::default(),
+            progress,
+            pull_mode: PullMode::FfOnly,
+            branch: self.push_target(),
+            _askpass: None,
+            _ask: None,
+        };
+        if let Op::Pull(mode) = op {
+            net.pull_mode = *mode;
+        }
+        if !op.uses_network() {
+            return net;
+        }
+        self.net_cancel = net.cancel.clone();
+        self.net_running = true;
+
+        // Questions come from the listener's thread. They cross to the UI
+        // through a channel, and the answer goes back through another.
+        let (ask, questions) = smol::channel::unbounded::<CredentialRequest>();
+        if PROMPTS.load(Ordering::Relaxed) {
+            let cancel = net.cancel.clone();
+            let askpass = gittree_core::askpass::Server::start(move |question| {
+                let (reply, answer) = std::sync::mpsc::channel();
+                let request = CredentialRequest {
+                    question: question.to_owned(),
+                    secret: gittree_core::askpass::is_secret(question),
+                    reply,
+                };
+                ask.send_blocking(request).ok()?;
+                let answer = answer.recv().ok().flatten();
+                if answer.is_none() {
+                    // Cancelling the prompt cancels the command.
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                answer
+            });
+            match (askpass, std::env::current_exe()) {
+                (Ok(server), Ok(exe)) => {
+                    net.env = server.env(&exe);
+                    net._askpass = Some(server);
+                }
+                _ => tracing::warn!("credential prompts are unavailable"),
+            }
+        } else {
+            net._ask = Some(ask);
+        }
+        enum Message {
+            Progress(Progress),
+            Question(CredentialRequest),
+        }
+        self.net_task = cx.spawn(async move |this, cx| {
+            loop {
+                let message = smol::future::or(
+                    async { updates.recv().await.ok().map(Message::Progress) },
+                    async { questions.recv().await.ok().map(Message::Question) },
+                )
+                .await;
+                // Both channels close when the command ends.
+                let Some(message) = message else { return };
+                let live = this.update(cx, |this, cx| match message {
+                    Message::Progress(progress) => {
+                        this.progress = Some(progress);
+                        cx.notify();
+                    }
+                    Message::Question(request) => cx.emit(RepoEvent::Credential(request)),
+                });
+                if live.is_err() {
+                    return;
+                }
+            }
+        });
+        net
+    }
+
+    /// Stops the network command that is running.
+    pub fn cancel_network(&mut self) {
+        self.net_cancel.store(true, Ordering::Relaxed);
     }
 
     /// Opens a conflicted file in the conflict view. The file is read off
@@ -680,6 +867,7 @@ impl RepoState {
                 (
                     branch::list_stashes(&runner).unwrap_or_default(),
                     merge::in_progress(&runner, &git_dir),
+                    remote::list_remotes(&runner).unwrap_or_default(),
                 ),
             ))
         });
@@ -687,9 +875,13 @@ impl RepoState {
         self.refs_task = cx.spawn(async move |this, cx| {
             let result = read.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok((refs, head, (stashes, in_progress))) => {
-                    if stashes != this.stashes || in_progress != this.in_progress {
+                Ok((refs, head, (stashes, in_progress, remotes))) => {
+                    if stashes != this.stashes
+                        || in_progress != this.in_progress
+                        || remotes != this.remotes
+                    {
                         this.stashes = stashes;
+                        this.remotes = remotes;
                         if in_progress.is_none() {
                             this.resolving = false;
                             this.conflict = None;
@@ -1035,7 +1227,15 @@ fn op_label(op: &Op) -> String {
         | Op::AbortOp
         | Op::SkipOp
         | Op::ResolveFile { .. }
-        | Op::ResolveSide { .. } => String::new(),
+        | Op::ResolveSide { .. }
+        | Op::Fetch
+        | Op::Pull(_)
+        | Op::Push { .. }
+        | Op::PushTag { .. }
+        | Op::AddRemote { .. }
+        | Op::RenameRemote { .. }
+        | Op::SetRemoteUrl { .. }
+        | Op::RemoveRemote(_) => String::new(),
     }
 }
 
@@ -1055,7 +1255,11 @@ fn execute(
     git_dir: &Path,
     has_commits: bool,
     label: String,
+    net: &Net,
 ) -> Result<Done, GitError> {
+    let report = |progress: Progress| {
+        let _ = net.progress.send_blocking(progress);
+    };
     // For an action that can stop on a conflict: the entry is parked until
     // the operation is continued to its end.
     let stoppable = |action: Action, run: &dyn Fn() -> Result<(), GitError>| {
@@ -1294,6 +1498,55 @@ fn execute(
         Op::ResolveSide { path, side } => {
             merge::resolve_side(runner, &path, side).map(|()| Done::Changed)
         }
+        Op::Fetch => remote::fetch(runner, &net.env, &net.cancel, report).map(|()| Done::Changed),
+        Op::Pull(_) => {
+            // A pull can stop on a conflict like a merge or a rebase.
+            let pulled = remote::pull(runner, net.pull_mode, &net.env, &net.cancel, report);
+            match pulled {
+                Err(_) if merge::in_progress(runner, git_dir).is_some() => Ok(Done::Conflict),
+                other => other.map(|()| Done::Changed),
+            }
+        }
+        Op::Push { force } => {
+            let Some((branch, remote_name, seen)) = &net.branch else {
+                return Ok(Done::Notice(t!("sync.no_remote").into_owned()));
+            };
+            let lease = if force { seen.as_deref() } else { None };
+            if force && lease.is_none() {
+                return Ok(Done::Notice(t!("sync.nothing_to_force").into_owned()));
+            }
+            remote::push(
+                runner,
+                remote_name,
+                branch,
+                // A branch with no upstream is published in the same step.
+                seen.is_none(),
+                lease,
+                &net.env,
+                &net.cancel,
+                report,
+            )?;
+            Ok(Done::Notice(
+                t!("sync.pushed", branch = branch, remote = remote_name).into_owned(),
+            ))
+        }
+        Op::PushTag { tag, delete } => {
+            let Some((_, remote_name, _)) = &net.branch else {
+                return Ok(Done::Notice(t!("sync.no_remote").into_owned()));
+            };
+            remote::push_tag(runner, remote_name, &tag, delete, &net.env, &net.cancel)
+                .map(|()| Done::Changed)
+        }
+        Op::AddRemote { name, url } => {
+            remote::add_remote(runner, &name, &url).map(|()| Done::Changed)
+        }
+        Op::RenameRemote { old, new } => {
+            remote::rename_remote(runner, &old, &new).map(|()| Done::Changed)
+        }
+        Op::SetRemoteUrl { name, url } => {
+            remote::set_remote_url(runner, &name, &url).map(|()| Done::Changed)
+        }
+        Op::RemoveRemote(name) => remote::remove_remote(runner, &name).map(|()| Done::Changed),
         Op::Undo => {
             let entries = journal.entries();
             let Some(entry) = entries.iter().rev().find(|entry| !entry.undone) else {
@@ -1367,6 +1620,10 @@ pub fn search_commits(commits: &[Commit], query: &str) -> Vec<usize> {
 /// Headless tests switch the file watcher off. It reports from its own
 /// thread, which GPUI's deterministic test scheduler does not allow.
 pub static WATCH_FILES: AtomicBool = AtomicBool::new(true);
+
+/// Headless tests also switch the credential listener off, for the same
+/// reason: it answers from its own thread.
+pub static PROMPTS: AtomicBool = AtomicBool::new(true);
 
 /// Watches the repository folder and refreshes after things settle for
 /// 300 ms. If the watcher cannot start, the app still refreshes on demand.

@@ -208,6 +208,58 @@ impl Render for Workspace {
         };
         let off = |button: gpui_kit::Stateful<gpui_kit::Div>| button.opacity(0.4);
         let divider = || div().flex_none().w(px(1.)).h(px(20.)).bg(p.border);
+        // Fetch, Pull and Push need a remote, and wait for one another.
+        let can_sync = trusted && !repo.remotes.is_empty() && !repo.net_running;
+        let pull_mode = self.app.read(cx).settings.pull_mode;
+        let repo_handle = self.repo.clone();
+        let net = |button: gpui_kit::Stateful<gpui_kit::Div>, enabled: bool, op: Op| {
+            if !enabled {
+                return off(button);
+            }
+            let repo = repo_handle.clone();
+            button
+                .cursor_pointer()
+                .hover(|style| style.bg(p.bg_hover))
+                .on_click(move |_, _, cx| repo.update(cx, |repo, cx| repo.run_op(op.clone(), cx)))
+        };
+        let running = repo.net_running.then(|| {
+            let (phase, percent) = match &repo.progress {
+                Some(progress) => (progress.phase.clone(), progress.percent),
+                None => (t!("toolbar.working").into_owned(), None),
+            };
+            h_flex()
+                .flex_none()
+                .gap_2()
+                .text_size(px(12.))
+                .text_color(p.text_secondary)
+                .child(match percent {
+                    Some(percent) => format!("{phase} {percent}%"),
+                    None => phase,
+                })
+                .child(
+                    div()
+                        .w(px(80.))
+                        .h(px(4.))
+                        .rounded(px(2.))
+                        .bg(p.bg_hover)
+                        .child(
+                            div()
+                                .h_full()
+                                .rounded(px(2.))
+                                .bg(p.accent)
+                                .w(gpui_kit::relative(percent.unwrap_or(4) as f32 / 100.)),
+                        ),
+                )
+                .child(
+                    Button::new("cancel-network")
+                        .xsmall()
+                        .ghost()
+                        .label(t!("sync.cancel").into_owned())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.repo.update(cx, |repo, _| repo.cancel_network())
+                        })),
+                )
+        });
         let toolbar = h_flex()
             .h(px(48.))
             .flex_none()
@@ -268,24 +320,31 @@ impl Render for Workspace {
             })
             .child(off(tool("redo", "redo", None, None)))
             .child(divider())
-            .child(off(tool(
-                "fetch",
-                "fetch",
-                Some(t!("toolbar.fetch").into_owned()),
-                None,
-            )))
-            .child(off(tool(
-                "pull",
-                "pull",
-                Some(t!("toolbar.pull").into_owned()),
-                behind,
-            )))
-            .child(off(tool(
-                "push",
-                "push",
-                Some(t!("toolbar.push").into_owned()),
-                ahead,
-            )))
+            .child(net(
+                tool(
+                    "fetch",
+                    "fetch",
+                    Some(t!("toolbar.fetch").into_owned()),
+                    None,
+                ),
+                can_sync,
+                Op::Fetch,
+            ))
+            .child(net(
+                tool(
+                    "pull",
+                    "pull",
+                    Some(t!("toolbar.pull").into_owned()),
+                    behind,
+                ),
+                can_sync,
+                Op::Pull(pull_mode),
+            ))
+            .child(net(
+                tool("push", "push", Some(t!("toolbar.push").into_owned()), ahead),
+                can_sync && has_commits,
+                Op::Push { force: false },
+            ))
             .child(divider())
             .child({
                 let button = tool(
@@ -322,7 +381,8 @@ impl Render for Workspace {
                 }
             })
             .child(div().flex_1())
-            .when(repo.busy, |toolbar| {
+            .children(running)
+            .when(repo.busy && !repo.net_running, |toolbar| {
                 toolbar.child(
                     div()
                         .text_size(px(12.))
@@ -448,6 +508,18 @@ impl Render for Workspace {
             )
             .on_action(cx.listener(|this, _: &crate::actions::Stash, window, cx| {
                 dialogs::stash(this.repo.clone(), window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &crate::actions::Fetch, _, cx| {
+                this.repo.update(cx, |repo, cx| repo.run_op(Op::Fetch, cx))
+            }))
+            .on_action(cx.listener(|this, _: &crate::actions::Pull, _, cx| {
+                let mode = this.app.read(cx).settings.pull_mode;
+                this.repo
+                    .update(cx, |repo, cx| repo.run_op(Op::Pull(mode), cx))
+            }))
+            .on_action(cx.listener(|this, _: &crate::actions::Push, _, cx| {
+                this.repo
+                    .update(cx, |repo, cx| repo.run_op(Op::Push { force: false }, cx))
             }))
             .on_action(cx.listener(|this, _: &FocusGraph, window, cx| {
                 this.graph.read(cx).focus.clone().focus(window, cx);

@@ -15,7 +15,7 @@ use rust_i18n::t;
 use super::graph::mono;
 use super::ui::{empty_state, ic};
 use crate::APP_NAME;
-use crate::actions::{InitRepository, OpenRepository, OpenSettings};
+use crate::actions::{CloneRepository, InitRepository, OpenRepository, OpenSettings};
 use crate::app_state::AppState;
 use crate::app_state::GitCheck;
 use crate::palette::palette;
@@ -202,7 +202,6 @@ impl Render for WelcomeView {
                             window.dispatch_action(Box::new(OpenRepository), cx)
                         }),
                     )
-                    // Clone arrives with the remotes milestone.
                     .child(
                         action(
                             "clone",
@@ -212,7 +211,10 @@ impl Render for WelcomeView {
                             "⇧⌘O",
                             false,
                         )
-                        .opacity(0.45),
+                        .cursor_pointer()
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(CloneRepository), cx)
+                        }),
                     )
                     .child(
                         action(

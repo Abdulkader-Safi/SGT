@@ -812,3 +812,317 @@ pub fn pick(
         cx,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Remotes, credentials and clone.
+
+use crate::app_state::AppState;
+use crate::repo_state::CredentialRequest;
+
+/// Git or ssh asks for a user name, password or passphrase. What is typed
+/// goes to Git once and is dropped (FR-SYNC-03).
+pub fn credential(request: CredentialRequest, window: &mut Window, cx: &mut App) {
+    let secret = request.secret;
+    let input = cx.new(|cx| InputState::new(window, cx).masked(secret));
+    let first = Cell::new(true);
+    let request = Rc::new(request);
+    window.open_alert_dialog(cx, move |alert, window, cx| {
+        if first.replace(false) {
+            input.focus_handle(cx).focus(window, cx);
+        }
+        let p = palette(cx);
+        let answer = {
+            let (request, input) = (request.clone(), input.clone());
+            move |cx: &mut App| {
+                let typed = input.read(cx).value().to_string();
+                let _ = request.reply.send(Some(typed));
+            }
+        };
+        let (enter, click) = (answer.clone(), answer);
+        let (cancel, closed) = (request.clone(), request.clone());
+        alert
+            .width(px(460.))
+            .title(t!("credential.title").into_owned())
+            .description(request.question.clone())
+            .child(
+                v_flex()
+                    .gap(px(10.))
+                    .child(Input::new(&input).id("credential").small())
+                    .child(
+                        h_flex()
+                            .gap(px(6.))
+                            .text_size(px(12.))
+                            .text_color(p.text_tertiary)
+                            .child(ic("lock", 12., p.text_tertiary))
+                            .child(div().flex_1().child(t!("credential.note").into_owned())),
+                    ),
+            )
+            .on_ok(move |_, _, cx| {
+                enter(cx);
+                true
+            })
+            // Escape, or the dialog closing any other way, cancels the
+            // command. A second send after an answer is ignored.
+            .on_cancel(move |_, _, _| {
+                let _ = closed.reply.send(None);
+                true
+            })
+            .footer(
+                DialogFooter::new()
+                    .child(
+                        Button::new("cancel")
+                            .label(t!("dialog.cancel").into_owned())
+                            .on_click(move |_, window, cx| {
+                                let _ = cancel.reply.send(None);
+                                window.close_dialog(cx);
+                            }),
+                    )
+                    .child(
+                        Button::new("ok")
+                            .primary()
+                            .label(t!("credential.ok").into_owned())
+                            .on_click(move |_, window, cx| {
+                                click(cx);
+                                window.close_dialog(cx);
+                            }),
+                    ),
+            )
+    });
+}
+
+pub fn force_push(
+    repo: Entity<RepoState>,
+    branch: String,
+    behind: u32,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    confirm_destructive(
+        t!("push.force_title", branch = branch).into_owned(),
+        t!("push.force_text", count = behind).into_owned(),
+        t!("push.force").into_owned(),
+        move |cx| repo.update(cx, |repo, cx| repo.run_op(Op::Push { force: true }, cx)),
+        window,
+        cx,
+    );
+}
+
+/// Adds a remote, or with `existing` changes the URL of one.
+pub fn remote(
+    repo: Entity<RepoState>,
+    existing: Option<(String, String)>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let editing = existing.is_some();
+    let (old_name, old_url) = existing.unwrap_or_default();
+    let name = text_input(&old_name, "origin".into(), window, cx);
+    let url = text_input(&old_url, String::new(), window, cx);
+    let (body_name, body_url) = (name.clone(), url.clone());
+    form(
+        if editing {
+            t!("remote.edit_title").into_owned()
+        } else {
+            t!("remote.add_title").into_owned()
+        },
+        None,
+        if editing {
+            t!("remote.save").into_owned()
+        } else {
+            t!("remote.add").into_owned()
+        },
+        Some(if editing { url.clone() } else { name.clone() }),
+        move |_, cx| {
+            let p = palette(cx);
+            v_flex()
+                .gap(px(14.))
+                .child(field(
+                    t!("branch.name").into_owned(),
+                    Input::new(&body_name).id("remote-name").small(),
+                    None,
+                    p,
+                ))
+                .child(field(
+                    t!("remote.url").into_owned(),
+                    Input::new(&body_url).id("remote-url").small(),
+                    Some(t!("remote.url_help").into_owned()),
+                    p,
+                ))
+                .into_any_element()
+        },
+        move |_, cx| {
+            let new_name = name.read(cx).value().trim().to_owned();
+            let new_url = url.read(cx).value().trim().to_owned();
+            if new_name.is_empty() || new_url.is_empty() {
+                return false;
+            }
+            repo.update(cx, |repo, cx| {
+                if !editing {
+                    repo.run_op(
+                        Op::AddRemote {
+                            name: new_name,
+                            url: new_url,
+                        },
+                        cx,
+                    );
+                    return;
+                }
+                if new_url != old_url {
+                    repo.run_op(
+                        Op::SetRemoteUrl {
+                            name: old_name.clone(),
+                            url: new_url,
+                        },
+                        cx,
+                    );
+                }
+                if new_name != old_name {
+                    repo.run_op(
+                        Op::RenameRemote {
+                            old: old_name.clone(),
+                            new: new_name,
+                        },
+                        cx,
+                    );
+                }
+            });
+            true
+        },
+        window,
+        cx,
+    );
+}
+
+pub fn remove_remote(repo: Entity<RepoState>, name: String, window: &mut Window, cx: &mut App) {
+    let op = Op::RemoveRemote(name.clone());
+    confirm_destructive(
+        t!("remote.remove_title", name = name).into_owned(),
+        t!("remote.remove_text").into_owned(),
+        t!("remote.remove").into_owned(),
+        move |cx| repo.update(cx, |repo, cx| repo.run_op(op.clone(), cx)),
+        window,
+        cx,
+    );
+}
+
+/// The clone dialog: URL and destination, then progress with Cancel, or
+/// the error with another try (FR-REPO-02).
+pub fn clone_repository(app: Entity<AppState>, window: &mut Window, cx: &mut App) {
+    let base = app.read(cx).settings.clone_dir.clone();
+    let url = text_input("", "git@github.com:user/project.git".into(), window, cx);
+    let dest = text_input(&base.display().to_string(), String::new(), window, cx);
+    let first = Cell::new(true);
+    window.open_alert_dialog(cx, move |alert, window, cx| {
+        if first.replace(false) {
+            url.focus_handle(cx).focus(window, cx);
+        }
+        let p = palette(cx);
+        let state = app.read(cx);
+        let job = state.clone.as_ref();
+        let running = job.is_some_and(|job| job.running());
+        let failed = job
+            .and_then(|job| job.error.as_ref())
+            .map(|error| crate::error_message(error.kind));
+        let start = {
+            let (app, url, dest) = (app.clone(), url.clone(), dest.clone());
+            move |cx: &mut App| {
+                let source = url.read(cx).value().trim().to_owned();
+                if source.is_empty() {
+                    return;
+                }
+                // Into a folder named after the repository.
+                let name = source
+                    .trim_end_matches('/')
+                    .rsplit(['/', ':'])
+                    .next()
+                    .unwrap_or("repository")
+                    .trim_end_matches(".git")
+                    .to_owned();
+                let folder = std::path::PathBuf::from(dest.read(cx).value().trim()).join(name);
+                app.update(cx, |app, cx| app.clone_repo(source, folder, cx));
+            }
+        };
+        let (enter, click) = (start.clone(), start);
+        let (stop, closed) = (app.clone(), app.clone());
+        let progress = job.filter(|_| running).map(|job| {
+            let (phase, percent) = match &job.progress {
+                Some(progress) => (progress.phase.clone(), progress.percent),
+                None => (t!("clone.starting").into_owned(), None),
+            };
+            v_flex()
+                .gap_2()
+                .p(px(14.))
+                .rounded(px(8.))
+                .bg(p.bg_panel)
+                .border_1()
+                .border_color(p.border)
+                .child(
+                    h_flex()
+                        .text_size(px(12.))
+                        .text_color(p.text_secondary)
+                        .child(div().flex_1().child(phase))
+                        .children(percent.map(|percent| format!("{percent}%"))),
+                )
+                .child(
+                    div().h(px(4.)).rounded(px(2.)).bg(p.bg_hover).child(
+                        div()
+                            .h_full()
+                            .rounded(px(2.))
+                            .bg(p.accent)
+                            .w(gpui_kit::relative(percent.unwrap_or(4) as f32 / 100.)),
+                    ),
+                )
+        });
+        alert
+            .width(px(480.))
+            .title(t!("clone.title").into_owned())
+            .child(
+                v_flex()
+                    .gap(px(14.))
+                    .child(field(
+                        t!("clone.url").into_owned(),
+                        Input::new(&url).id("clone-url").small().disabled(running),
+                        Some(failed.unwrap_or_else(|| t!("remote.url_help").into_owned())),
+                        p,
+                    ))
+                    .child(field(
+                        t!("clone.dest").into_owned(),
+                        Input::new(&dest).id("clone-dest").small().disabled(running),
+                        Some(t!("clone.dest_help").into_owned()),
+                        p,
+                    ))
+                    .children(progress),
+            )
+            .on_ok(move |_, _, cx| {
+                if !running {
+                    enter(cx);
+                }
+                // The dialog stays to show progress. It closes itself when
+                // the repository opens.
+                false
+            })
+            .on_cancel(move |_, _, cx| {
+                closed.update(cx, |app, cx| app.cancel_clone(cx));
+                true
+            })
+            .footer(
+                DialogFooter::new()
+                    .child(
+                        Button::new("cancel")
+                            .label(t!("dialog.cancel").into_owned())
+                            .on_click(move |_, window, cx| {
+                                stop.update(cx, |app, cx| app.cancel_clone(cx));
+                                window.close_dialog(cx);
+                            }),
+                    )
+                    .child(
+                        Button::new("ok")
+                            .primary()
+                            .loading(running)
+                            .disabled(running)
+                            .label(t!("clone.action").into_owned())
+                            .on_click(move |_, _, cx| click(cx)),
+                    ),
+            )
+    });
+}

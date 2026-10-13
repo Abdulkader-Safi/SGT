@@ -109,6 +109,7 @@ impl Sidebar {
             .context_menu({
                 let repo = self.repo.clone();
                 let (kind, current, target) = (r.kind, r.is_current, r.target.clone());
+                let behind = r.behind;
                 let short = r.short_name().to_owned();
                 move |menu, _, cx| {
                     let trusted = repo.read(cx).repository.trusted;
@@ -150,6 +151,21 @@ impl Sidebar {
                                     .on_click(run(Op::Checkout(Target::Branch(short.clone())))),
                             )
                             .item(branch_here)
+                            .item({
+                                let (repo, name) = (repo.clone(), short.clone());
+                                PopupMenuItem::new(t!("push.force_item").into_owned())
+                                    .icon(crate::icons::icon("push"))
+                                    .disabled(!trusted || !current || behind == 0)
+                                    .on_click(move |_, window, cx| {
+                                        dialogs::force_push(
+                                            repo.clone(),
+                                            name.clone(),
+                                            behind,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                            })
                             .separator()
                             .item({
                                 let (repo, from, into) =
@@ -226,6 +242,20 @@ impl Sidebar {
                             )
                             .item(branch_here)
                             .separator()
+                            .item({
+                                let tag = short.clone();
+                                PopupMenuItem::new(t!("push.tag").into_owned())
+                                    .icon(crate::icons::icon("push"))
+                                    .disabled(!trusted)
+                                    .on_click(run(Op::PushTag { tag, delete: false }))
+                            })
+                            .item({
+                                let tag = short.clone();
+                                PopupMenuItem::new(t!("push.delete_remote_tag").into_owned())
+                                    .icon(crate::icons::icon("remote"))
+                                    .disabled(!trusted)
+                                    .on_click(run(Op::PushTag { tag, delete: true }))
+                            })
                             .item(
                                 item("trash", "menu_item.delete_tag")
                                     .disabled(!trusted)
@@ -385,7 +415,65 @@ impl Render for Sidebar {
                             p.text_tertiary,
                         ))
                         .child(div().flex_1().child(caption(t!(*title).to_uppercase(), p)))
-                        .child(caption(count.to_string(), p)),
+                        .child(caption(count.to_string(), p))
+                        .context_menu({
+                            let repo = self.repo.clone();
+                            let is_remotes = *kind == RefKind::Remote;
+                            move |menu, _, cx| {
+                                if !is_remotes {
+                                    return menu;
+                                }
+                                let trusted = repo.read(cx).repository.trusted;
+                                let remotes = repo.read(cx).remotes.clone();
+                                let add = repo.clone();
+                                let mut menu = menu.item(
+                                    PopupMenuItem::new(t!("remote.add_item").into_owned())
+                                        .icon(crate::icons::icon("plus"))
+                                        .disabled(!trusted)
+                                        .on_click(move |_, window, cx| {
+                                            dialogs::remote(add.clone(), None, window, cx)
+                                        }),
+                                );
+                                for remote in remotes {
+                                    let (edit, remove) = (repo.clone(), repo.clone());
+                                    let (name, url) = (remote.name.clone(), remote.fetch_url);
+                                    let gone = name.clone();
+                                    menu =
+                                        menu.separator()
+                                            .item(
+                                                PopupMenuItem::new(
+                                                    t!("remote.edit_item", name = name)
+                                                        .into_owned(),
+                                                )
+                                                .disabled(!trusted)
+                                                .on_click(move |_, window, cx| {
+                                                    dialogs::remote(
+                                                        edit.clone(),
+                                                        Some((name.clone(), url.clone())),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new(
+                                                    t!("remote.remove_item", name = gone)
+                                                        .into_owned(),
+                                                )
+                                                .disabled(!trusted)
+                                                .on_click(move |_, window, cx| {
+                                                    dialogs::remove_remote(
+                                                        remove.clone(),
+                                                        gone.clone(),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }),
+                                            );
+                                }
+                                menu
+                            }
+                        }),
                 )
                 .when(!collapsed, |group| {
                     group.children(rows).children(empty_stashes)

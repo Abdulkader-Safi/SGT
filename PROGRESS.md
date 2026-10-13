@@ -15,7 +15,8 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M2: graph and read-only browsing | Built, 57 tests pass. Waiting on the manual checks listed below |
 | M3: staging and commit | Built, 81 tests pass. Waiting on the manual checks listed below |
 | M4: branches, tags, stash | Built, 93 tests pass. Waiting on the manual checks listed below |
-| M5 to M10 | Not started |
+| M5: merge, rebase, conflicts | Built, 103 tests pass. Waiting on the manual checks listed below |
+| M6 to M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 
 ## M0: de-risk
@@ -326,3 +327,28 @@ Each core operation with its undo, the unmerged-commit list, the refusal to over
 - Pushing a tag and deleting a tag on the remote (FR-BRANCH-04) need the network work of M6.
 - Cherry-pick, revert and reset in the commit menu come with M5.
 - The MCP server does not have `git_checkout`, `git_stash` or branch create and delete yet, though the operations now exist.
+
+## M5: merge, rebase, conflicts
+
+### What exists
+
+- Core: merge (with the option to force a merge commit), rebase with continue, skip and abort, cherry-pick and revert with a mainline parent for merge commits, reset in three modes, detection of an operation in progress from the Git folder (also one started in a terminal), the conflict marker parser, and resolving a file by content or by whole side.
+- Git reports a conflict on stdout with exit code 1. The core turns that into the `Conflict` error kind by checking whether an operation was left in progress.
+- Journal: an action that stops on a conflict is parked in `.git/gittree/in-progress.json` and written when the operation is continued to its end, so one Undo takes the whole merge back. Reset and rebase save the index and tracked changes first, in every mode, so Undo restores uncommitted work too.
+- App: the banner for the operation in progress with Continue, Skip (rebase) and Abort, the conflict view (each region with Take current, Take incoming, Take both and Change, a result box that can be edited by hand, Mark resolved, whole-file buttons for binary and delete conflicts, and the "all resolved" state), and the dialogs for merge, rebase, reset and the mainline parent.
+- Menus: "Merge into" and "Rebase onto" on sidebar branches, and Cherry-pick, Revert and "Reset to here" on graph rows.
+
+### Checked by tests
+
+Each core operation against real Git, with undo: a forced merge commit, a conflicting merge resolved by region and continued, abort, a rebase that stops and is skipped or continued, cherry-pick and revert including a merge commit, and all three reset modes with an uncommitted change restored on undo. Through the app: a conflicting merge opens the conflict view by itself, "Take both" and Mark resolved stage the file, Continue finishes the merge, and one Undo returns to the start.
+
+### Still needs a check by hand
+
+- The merge, rebase and reset dialogs and the mainline prompt, opened from the menus.
+- The banner for a rebase started in a terminal.
+- Editing the result box by hand, and a binary conflict.
+
+### Differences from the design
+
+- The conflict view shows one result box for the whole file, not a preview of only the conflicted lines.
+- Region blocks show plain text, without line numbers or syntax colours.

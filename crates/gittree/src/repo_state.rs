@@ -11,8 +11,10 @@ use gittree_core::model::{
     StatusEntry,
 };
 use gittree_core::ops::branch::{self, Stash, Target as Checkout};
+use gittree_core::ops::merge::{self, InProgressOp, OpKind, ResetMode, Side};
 use gittree_core::ops::read;
 use gittree_core::ops::stage::{self, Target};
+use gittree_core::parse::conflict::{Choice, Region, parse_conflicts, resolve};
 use gittree_core::patch::{self, Lines};
 use gittree_core::{GitError, GitErrorKind, GitRunner};
 use gpui_kit::{AppContext, Context, EventEmitter, Task};
@@ -100,13 +102,60 @@ pub enum Op {
     StashApply(u32),
     StashPop(u32),
     StashDrop(u32),
+    Merge {
+        branch: String,
+        no_ff: bool,
+    },
+    Rebase(String),
+    CherryPick {
+        oid: String,
+        mainline: Option<u32>,
+    },
+    Revert {
+        oid: String,
+        mainline: Option<u32>,
+    },
+    Reset {
+        target: String,
+        mode: ResetMode,
+    },
+    /// Finishes, gives up or (rebase only) skips the operation in progress.
+    ContinueOp,
+    AbortOp,
+    SkipOp,
+    /// Writes the resolved content of a conflicted file and stages it.
+    ResolveFile {
+        path: RepoPath,
+        content: Vec<u8>,
+    },
+    ResolveSide {
+        path: RepoPath,
+        side: Side,
+    },
     /// Takes back the last undoable action.
     Undo,
+}
+
+/// The conflicted file open in the conflict view.
+pub struct ConflictFile {
+    pub path: RepoPath,
+    pub content: Arc<Vec<u8>>,
+    pub regions: Vec<Region>,
+    pub choices: Vec<Choice>,
+}
+
+impl ConflictFile {
+    /// The file with every choice so far applied.
+    pub fn result(&self) -> Vec<u8> {
+        resolve(&self.content, &self.regions, &self.choices)
+    }
 }
 
 /// What a finished op has to tell the UI.
 enum Done {
     Changed,
+    /// The action stopped on conflicts and waits to be continued.
+    Conflict,
     Committed(Oid),
     Notice(String),
 }
@@ -188,6 +237,14 @@ pub struct RepoState {
     pub search: Search,
     pub status: Vec<StatusEntry>,
     pub stashes: Vec<Stash>,
+    /// A merge, rebase, cherry-pick or revert stopped part way.
+    pub in_progress: Option<InProgressOp>,
+    /// The conflict view shows in place of the staging view.
+    pub resolving: bool,
+    pub conflict: Option<ConflictFile>,
+    /// Files resolved since the conflict view opened, for its list.
+    pub resolved: Vec<RepoPath>,
+    conflict_loading: Option<RepoPath>,
     /// An op is running. Views grey out their buttons meanwhile.
     pub busy: bool,
     ops: VecDeque<Op>,
@@ -227,6 +284,11 @@ impl RepoState {
             search: Search::default(),
             status: Vec::new(),
             stashes: Vec::new(),
+            in_progress: None,
+            resolving: false,
+            conflict: None,
+            resolved: Vec::new(),
+            conflict_loading: None,
             busy: false,
             ops: VecDeque::new(),
             journal,
@@ -302,6 +364,20 @@ impl RepoState {
         // Conflicted files first, then by path as Git lists them.
         status.sort_by_key(|entry| entry.conflict.is_none());
         self.status = status;
+        // A file that is no longer in conflict leaves the conflict view.
+        let conflicted = |path: &RepoPath| {
+            self.status
+                .iter()
+                .any(|entry| entry.conflict.is_some() && &entry.path == path)
+        };
+        if self
+            .conflict
+            .as_ref()
+            .is_some_and(|file| !conflicted(&file.path))
+        {
+            self.conflict = None;
+        }
+        self.resolved.retain(|path| !conflicted(path));
         let after_commit = self.after_commit.take();
         if self.selection.wip {
             match after_commit {
@@ -476,13 +552,25 @@ impl RepoState {
             Op::Checkout(target) => Some(target.clone()),
             _ => None,
         };
-        let run =
-            cx.background_spawn(async move { execute(op, &runner, &journal, has_commits, label) });
+        let git_dir = self.repository.git_dir.clone();
+        if let Op::ResolveFile { path, .. } | Op::ResolveSide { path, .. } = &op {
+            self.resolved.push(path.clone());
+            self.conflict = None;
+        }
+        let run = cx.background_spawn(async move {
+            execute(op, &runner, &journal, &git_dir, has_commits, label)
+        });
         self.op_task = cx.spawn(async move |this, cx| {
             let result = run.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(Done::Changed) => {}
+                    Ok(Done::Conflict) => {
+                        // Straight to the files that need a decision.
+                        this.select_wip(cx);
+                        this.resolving = true;
+                        cx.emit(RepoEvent::Notice(t!("merge.stopped").into_owned()));
+                    }
                     Ok(Done::Committed(oid)) => {
                         this.after_commit = Some(oid);
                         cx.emit(RepoEvent::Committed);
@@ -503,6 +591,46 @@ impl RepoState {
                 this.next_op(cx);
             });
         });
+    }
+
+    /// Opens a conflicted file in the conflict view. The file is read off
+    /// the UI thread.
+    pub fn open_conflict(&mut self, path: RepoPath, cx: &mut Context<Self>) {
+        self.resolving = true;
+        // Already being read: asking again would only start over.
+        if self.conflict_loading.as_ref() == Some(&path) {
+            return;
+        }
+        self.conflict_loading = Some(path.clone());
+        let full = self.repository.path.join(path.as_os_str());
+        let read = cx.background_spawn(async move { std::fs::read(full).unwrap_or_default() });
+        self.message_task = cx.spawn(async move |this, cx| {
+            let content = read.await;
+            let _ = this.update(cx, |this, cx| {
+                let regions = parse_conflicts(&content);
+                this.conflict_loading = None;
+                this.conflict = Some(ConflictFile {
+                    path,
+                    choices: vec![Choice::Unresolved; regions.len()],
+                    regions,
+                    content: Arc::new(content),
+                });
+                cx.notify();
+            });
+        });
+        cx.notify();
+    }
+
+    /// Picks what to keep of one region of the open conflict.
+    pub fn choose(&mut self, region: usize, choice: Choice, cx: &mut Context<Self>) {
+        if let Some(slot) = self
+            .conflict
+            .as_mut()
+            .and_then(|file| file.choices.get_mut(region))
+        {
+            *slot = choice;
+            cx.notify();
+        }
     }
 
     /// Deletes a branch. One with commits of its own is not deleted here:
@@ -544,20 +672,30 @@ impl RepoState {
     /// Reads refs and HEAD. If they moved, the log is read again too.
     fn refresh_refs(&mut self, quiet_log: bool, cx: &mut Context<Self>) {
         let runner = self.runner.clone();
+        let git_dir = self.repository.git_dir.clone();
         let read = cx.background_spawn(async move {
             Ok::<_, GitError>((
                 read::list_refs(&runner)?,
                 read::head(&runner)?,
-                branch::list_stashes(&runner).unwrap_or_default(),
+                (
+                    branch::list_stashes(&runner).unwrap_or_default(),
+                    merge::in_progress(&runner, &git_dir),
+                ),
             ))
         });
         // Replacing the task drops an older read that is still running.
         self.refs_task = cx.spawn(async move |this, cx| {
             let result = read.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok((refs, head, stashes)) => {
-                    if stashes != this.stashes {
+                Ok((refs, head, (stashes, in_progress))) => {
+                    if stashes != this.stashes || in_progress != this.in_progress {
                         this.stashes = stashes;
+                        if in_progress.is_none() {
+                            this.resolving = false;
+                            this.conflict = None;
+                            this.resolved.clear();
+                        }
+                        this.in_progress = in_progress;
                         cx.notify();
                     }
                     if refs == this.refs && head == this.repository.head {
@@ -879,9 +1017,25 @@ fn op_label(op: &Op) -> String {
         Op::DeleteTag(name) => t!("journal.delete_tag", name = name).into_owned(),
         Op::StashPush { .. } => t!("journal.stash_push").into_owned(),
         Op::StashDrop(_) => t!("journal.stash_drop").into_owned(),
-        Op::Stage(_) | Op::Unstage(_) | Op::Undo | Op::StashApply(_) | Op::StashPop(_) => {
-            String::new()
+        Op::Merge { branch, .. } => t!("journal.merge", branch = branch).into_owned(),
+        Op::Rebase(onto) => t!("journal.rebase", onto = onto).into_owned(),
+        Op::CherryPick { oid, .. } => {
+            t!("journal.cherry_pick", oid = &oid[..7.min(oid.len())]).into_owned()
         }
+        Op::Revert { oid, .. } => t!("journal.revert", oid = &oid[..7.min(oid.len())]).into_owned(),
+        Op::Reset { target, .. } => {
+            t!("journal.reset", target = &target[..7.min(target.len())]).into_owned()
+        }
+        Op::Stage(_)
+        | Op::Unstage(_)
+        | Op::Undo
+        | Op::StashApply(_)
+        | Op::StashPop(_)
+        | Op::ContinueOp
+        | Op::AbortOp
+        | Op::SkipOp
+        | Op::ResolveFile { .. }
+        | Op::ResolveSide { .. } => String::new(),
     }
 }
 
@@ -898,9 +1052,27 @@ fn execute(
     op: Op,
     runner: &GitRunner,
     journal: &Journal,
+    git_dir: &Path,
     has_commits: bool,
     label: String,
 ) -> Result<Done, GitError> {
+    // For an action that can stop on a conflict: the entry is parked until
+    // the operation is continued to its end.
+    let stoppable = |action: Action, run: &dyn Fn() -> Result<(), GitError>| {
+        let pending = journal.begin(runner, action, label.clone())?;
+        match run() {
+            Ok(()) => journal.finish(runner, pending).map(|_| Done::Changed),
+            Err(error) if error.kind == GitErrorKind::Conflict => {
+                journal.park(pending)?;
+                Ok(Done::Conflict)
+            }
+            Err(error) => {
+                journal.abandon(runner, pending);
+                Err(error)
+            }
+        }
+    };
+    let kind = || merge::in_progress(runner, git_dir).map(|op| op.kind);
     // Snapshot, run, then record. A failed action leaves no entry behind.
     let journaled = |action: Action, run: &dyn Fn() -> Result<Done, GitError>| {
         let pending = journal.begin(runner, action, label.clone())?;
@@ -1049,6 +1221,78 @@ fn execute(
             journaled(action, &|| {
                 branch::stash_drop(runner, index).map(|()| Done::Changed)
             })
+        }
+        Op::Merge { branch, no_ff } => {
+            let action = Action::Merge {
+                branch: branch.clone(),
+                no_ff,
+            };
+            stoppable(action, &|| merge::merge(runner, git_dir, &branch, no_ff))
+        }
+        Op::Rebase(onto) => stoppable(Action::Rebase { onto: onto.clone() }, &|| {
+            merge::rebase(runner, git_dir, &onto)
+        }),
+        Op::CherryPick { oid, mainline } => {
+            let action = Action::CherryPick {
+                oid: oid.clone(),
+                mainline,
+            };
+            stoppable(action, &|| {
+                merge::cherry_pick(runner, git_dir, &oid, mainline)
+            })
+        }
+        Op::Revert { oid, mainline } => {
+            let action = Action::Revert {
+                oid: oid.clone(),
+                mainline,
+            };
+            stoppable(action, &|| merge::revert(runner, git_dir, &oid, mainline))
+        }
+        Op::Reset { target, mode } => {
+            let action = Action::Reset {
+                target: target.clone(),
+                mode,
+            };
+            journaled(action, &|| {
+                merge::reset(runner, &target, mode).map(|()| Done::Changed)
+            })
+        }
+        Op::ContinueOp | Op::SkipOp => {
+            let Some(kind) = kind() else {
+                return Ok(Done::Changed);
+            };
+            let step = if matches!(op, Op::SkipOp) && kind == OpKind::Rebase {
+                merge::rebase_skip(runner, git_dir)
+            } else {
+                merge::continue_op(runner, git_dir, kind)
+            };
+            match step {
+                Ok(()) => {
+                    // The whole operation is through: its entry can go in.
+                    if let Some(pending) = journal.take_parked() {
+                        journal.finish(runner, pending)?;
+                    }
+                    Ok(Done::Changed)
+                }
+                // A rebase stopped again, on its next commit.
+                Err(error) if error.kind == GitErrorKind::Conflict => Ok(Done::Conflict),
+                Err(error) => Err(error),
+            }
+        }
+        Op::AbortOp => {
+            if let Some(kind) = kind() {
+                merge::abort_op(runner, kind)?;
+            }
+            if let Some(pending) = journal.take_parked() {
+                journal.abandon(runner, pending);
+            }
+            Ok(Done::Changed)
+        }
+        Op::ResolveFile { path, content } => {
+            merge::resolve_file(runner, &path, &content).map(|()| Done::Changed)
+        }
+        Op::ResolveSide { path, side } => {
+            merge::resolve_side(runner, &path, side).map(|()| Done::Changed)
         }
         Op::Undo => {
             let entries = journal.entries();

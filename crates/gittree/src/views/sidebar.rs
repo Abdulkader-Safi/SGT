@@ -112,6 +112,11 @@ impl Sidebar {
                 let short = r.short_name().to_owned();
                 move |menu, _, cx| {
                     let trusted = repo.read(cx).repository.trusted;
+                    let head_name = match &repo.read(cx).repository.head {
+                        gittree_core::model::Head::Branch(name)
+                        | gittree_core::model::Head::Unborn(name) => name.clone(),
+                        gittree_core::model::Head::Detached(_) => "HEAD".to_owned(),
+                    };
                     let run = |op: Op| {
                         let repo = repo.clone();
                         move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut gpui_kit::App| {
@@ -145,6 +150,43 @@ impl Sidebar {
                                     .on_click(run(Op::Checkout(Target::Branch(short.clone())))),
                             )
                             .item(branch_here)
+                            .separator()
+                            .item({
+                                let (repo, from, into) =
+                                    (repo.clone(), short.clone(), head_name.clone());
+                                PopupMenuItem::new(
+                                    t!("menu_item.merge_into", branch = head_name).into_owned(),
+                                )
+                                .icon(crate::icons::icon("merge"))
+                                .disabled(!trusted || current)
+                                .on_click(move |_, window, cx| {
+                                    dialogs::merge(
+                                        repo.clone(),
+                                        from.clone(),
+                                        into.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .item({
+                                let (repo, onto, mine) =
+                                    (repo.clone(), short.clone(), head_name.clone());
+                                PopupMenuItem::new(
+                                    t!("menu_item.rebase_onto", branch = head_name).into_owned(),
+                                )
+                                .icon(crate::icons::icon("fetch"))
+                                .disabled(!trusted || current)
+                                .on_click(move |_, window, cx| {
+                                    dialogs::rebase(
+                                        repo.clone(),
+                                        mine.clone(),
+                                        onto.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            })
                             .separator()
                             .item(
                                 item("file", "menu_item.rename")

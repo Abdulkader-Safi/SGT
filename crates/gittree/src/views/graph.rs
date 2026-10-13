@@ -370,7 +370,18 @@ fn commit_menu(
     label: &str,
     cx: &App,
 ) -> PopupMenu {
-    let trusted = repo.read(cx).repository.trusted;
+    let state = repo.read(cx);
+    let trusted = state.repository.trusted;
+    let head_name = match &state.repository.head {
+        Head::Branch(name) | Head::Unborn(name) => name.clone(),
+        Head::Detached(_) => "HEAD".to_owned(),
+    };
+    let row = state.history.row_of(oid);
+    // Cherry-picking or resetting to the commit HEAD is on does nothing.
+    let is_head = state.refs.iter().any(|r| r.is_current && &r.target == oid);
+    let parents = row
+        .map(|row| state.history.commits[row].parents.clone())
+        .unwrap_or_default();
     let item = |icon_name: &str, key: &str| {
         PopupMenuItem::new(t!(key).into_owned()).icon(crate::icons::icon(icon_name))
     };
@@ -412,6 +423,39 @@ fn commit_menu(
                 )
             }),
     )
+    .separator()
+    .item({
+        let (repo, oid, parents) = (repo.clone(), oid.clone(), parents.clone());
+        item("commit", "menu_item.cherry_pick")
+            .disabled(!trusted || is_head)
+            .on_click(move |_, window, cx| {
+                dialogs::pick(
+                    repo.clone(),
+                    oid.clone(),
+                    parents.clone(),
+                    false,
+                    window,
+                    cx,
+                )
+            })
+    })
+    .item({
+        let (repo, oid, parents) = (repo.clone(), oid.clone(), parents.clone());
+        item("undo", "menu_item.revert")
+            .disabled(!trusted)
+            .on_click(move |_, window, cx| {
+                dialogs::pick(repo.clone(), oid.clone(), parents.clone(), true, window, cx)
+            })
+    })
+    .item({
+        let (repo, target, branch) = (repo.clone(), oid.to_string(), head_name.clone());
+        PopupMenuItem::new(t!("menu_item.reset_here", branch = head_name).into_owned())
+            .icon(crate::icons::icon("fetch"))
+            .disabled(!trusted || is_head)
+            .on_click(move |_, window, cx| {
+                dialogs::reset(repo.clone(), branch.clone(), target.clone(), window, cx)
+            })
+    })
     .separator()
     .item(
         item("copy", "menu_item.copy_hash").on_click(move |_, _, cx| {

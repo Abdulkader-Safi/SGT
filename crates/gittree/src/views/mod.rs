@@ -1,4 +1,5 @@
 pub mod commit_detail;
+pub mod conflict;
 pub mod dialogs;
 pub mod diff;
 pub mod git_check;

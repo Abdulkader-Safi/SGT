@@ -592,11 +592,25 @@ impl Render for StagingView {
                 commit.child(note("info", t!("commit.too_long").into_owned(), p.warning))
             })
             .when(conflicts, |commit| {
-                commit.child(note(
-                    "warning",
-                    t!("staging.resolve_first").into_owned(),
-                    p.danger,
-                ))
+                let repo = self.repo.clone();
+                commit
+                    .child(note(
+                        "warning",
+                        t!("staging.resolve_first").into_owned(),
+                        p.danger,
+                    ))
+                    .child(
+                        Button::new("resolve-conflicts")
+                            .primary()
+                            .small()
+                            .label(t!("conflict.open").into_owned())
+                            .on_click(move |_, _, cx| {
+                                repo.update(cx, |repo, cx| {
+                                    repo.resolving = true;
+                                    cx.notify();
+                                })
+                            }),
+                    )
             })
             .when(pushed, |commit| {
                 commit.child(note(

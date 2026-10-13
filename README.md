@@ -17,12 +17,13 @@ Early development. What works today:
 - Commit and amend, with the message kept as a draft until it is used.
 - Inline and split diffs with syntax colours for 19 languages.
 - Branches, tags and stashes: create, rename, delete, check out, with right-click menus and dialogs.
-- Undo for commits, discards, checkouts, and branch, tag and stash changes.
+- Merge, rebase, cherry-pick, revert and reset, with a conflict view that resolves each region or the whole file.
+- Undo for commits, discards, checkouts, merges, rebases, resets, and branch, tag and stash changes.
 - An MCP server (`gittree mcp`), so a coding agent can read status, history, diffs and blame, and stage and commit when you allow it.
 - The view updates by itself when the repository changes on disk.
 - Settings, light and dark themes, and the window layout restored at launch.
 
-Not built yet: merge and rebase, conflict resolution, clone, fetch, pull, push, redo. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
+Not built yet: clone, fetch, pull, push, redo, the command palette. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
 
 ## Requirements
 

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use gittree_core::model::Head;
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{
     Disableable, ResizablePanelEvent, ResizableState, Sizable, h_flex, h_resizable,
@@ -15,6 +15,7 @@ use gpui_kit::{
 use rust_i18n::t;
 
 use super::commit_detail::CommitDetail;
+use super::conflict::ConflictView;
 use super::dialogs;
 use super::graph::GraphView;
 use super::sidebar::Sidebar;
@@ -38,6 +39,7 @@ pub struct Workspace {
     graph: Entity<GraphView>,
     detail: Entity<CommitDetail>,
     staging: Entity<StagingView>,
+    conflict: Entity<ConflictView>,
     search: Entity<InputState>,
     focus: FocusHandle,
 }
@@ -124,6 +126,7 @@ impl Workspace {
             sidebar: cx.new(|cx| Sidebar::new(repo.clone(), window, cx)),
             detail: cx.new(|cx| CommitDetail::new(repo.clone(), cx)),
             staging: cx.new(|cx| StagingView::new(app.clone(), repo.clone(), window, cx)),
+            conflict: cx.new(|cx| ConflictView::new(repo.clone(), window, cx)),
             graph,
             panels,
             search,
@@ -158,6 +161,7 @@ impl Render for Workspace {
         let trusted = repo.repository.trusted;
         let detached = matches!(repo.repository.head, Head::Detached(_));
         let (has_commits, has_changes) = (repo.has_commits(), !repo.status.is_empty());
+        let busy = repo.busy;
         let head = match &repo.repository.head {
             Head::Branch(name) | Head::Unborn(name) => name.clone(),
             Head::Detached(oid) => t!("workspace.detached", oid = &oid[..7]).into_owned(),
@@ -374,7 +378,50 @@ impl Render for Workspace {
             )
         });
 
-        let right = if repo.selection.wip {
+        let progress = repo.in_progress.clone().map(|op| {
+            use gittree_core::ops::merge::OpKind;
+            let mut text = match op.kind {
+                OpKind::Merge => t!("banner.merge"),
+                OpKind::Rebase => t!("banner.rebase"),
+                OpKind::CherryPick => t!("banner.cherry_pick"),
+                OpKind::Revert => t!("banner.revert"),
+            }
+            .into_owned();
+            if let Some(name) = &op.onto {
+                text.push_str(&t!("banner.onto", name = name));
+            }
+            if let Some((at, total)) = op.step {
+                text.push_str(&t!("banner.step", at = at, total = total));
+            }
+            text.push_str(". ");
+            text.push_str(&if op.conflicted > 0 {
+                t!("banner.conflicts", count = op.conflicted)
+            } else {
+                t!("banner.no_conflicts")
+            });
+            let act = |id: &'static str, key: &str, op: Op| {
+                Button::new(id)
+                    .small()
+                    .disabled(busy || !trusted)
+                    .label(t!(key).into_owned())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.repo.update(cx, |repo, cx| repo.run_op(op.clone(), cx))
+                    }))
+            };
+            banner(BannerKind::Info, "merge", text, p)
+                .child(act("abort-op", "banner.abort", Op::AbortOp).ghost())
+                .when(op.kind == OpKind::Rebase, |banner| {
+                    banner.child(act("skip-op", "banner.skip", Op::SkipOp).ghost())
+                })
+                .child(
+                    act("continue-banner", "banner.continue", Op::ContinueOp)
+                        .disabled(busy || !trusted || op.conflicted > 0),
+                )
+        });
+
+        let right = if repo.resolving && repo.selection.wip {
+            self.conflict.clone().into_any_element()
+        } else if repo.selection.wip {
             self.staging.clone().into_any_element()
         } else {
             self.detail.clone().into_any_element()
@@ -420,6 +467,7 @@ impl Render for Workspace {
             }))
             .child(toolbar)
             .children(untrusted)
+            .children(progress)
             .children(detached_banner)
             .child(
                 div().flex_1().overflow_hidden().child(

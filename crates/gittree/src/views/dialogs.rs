@@ -55,6 +55,7 @@ use gittree_core::ops::branch::Target;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, AppContext, Entity, Focusable, FontWeight, IntoElement, SharedString, Styled, div,
     px,
@@ -501,6 +502,310 @@ pub fn checkout_blocked(
         move |_, cx| {
             let op = Op::StashAndSwitch(target.clone());
             repo.update(cx, |repo, cx| repo.run_op(op, cx));
+            true
+        },
+        window,
+        cx,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Merge, rebase, reset, cherry-pick and revert.
+
+use gittree_core::ops::merge::ResetMode;
+use gpui_kit::{InteractiveElement, StatefulInteractiveElement};
+
+use super::ui::{RefLabel, ref_label};
+
+/// From one ref to another, as two labels with an arrow.
+fn flow(from: &str, to: &str, p: Palette) -> AnyElement {
+    h_flex()
+        .justify_center()
+        .gap(px(10.))
+        .p_3()
+        .rounded(px(8.))
+        .bg(p.bg_panel)
+        .border_1()
+        .border_color(p.border)
+        .child(ref_label(RefLabel::Local, from.to_owned(), p))
+        .child(ic("chevron-right", 14., p.text_tertiary))
+        .child(ref_label(RefLabel::Current, to.to_owned(), p))
+        .into_any_element()
+}
+
+pub fn merge(
+    repo: Entity<RepoState>,
+    branch: String,
+    into: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let no_ff = cx.new(|_| false);
+    let (body_no_ff, from, to) = (no_ff.clone(), branch.clone(), into.clone());
+    form(
+        t!("merge.merge_title", into = into).into_owned(),
+        Some(t!("merge.merge_text", branch = branch, into = into).into_owned()),
+        t!("merge.action").into_owned(),
+        None,
+        move |_, cx| {
+            v_flex()
+                .gap(px(14.))
+                .child(flow(&from, &to, palette(cx)))
+                .child(toggle(
+                    "no-ff",
+                    t!("merge.no_ff").into_owned(),
+                    &body_no_ff,
+                    cx,
+                ))
+                .into_any_element()
+        },
+        move |_, cx| {
+            let op = Op::Merge {
+                branch: branch.clone(),
+                no_ff: *no_ff.read(cx),
+            };
+            repo.update(cx, |repo, cx| repo.run_op(op, cx));
+            true
+        },
+        window,
+        cx,
+    );
+}
+
+pub fn rebase(
+    repo: Entity<RepoState>,
+    current: String,
+    onto: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let (from, to) = (current.clone(), onto.clone());
+    form(
+        t!("merge.rebase_title", branch = current).into_owned(),
+        Some(t!("merge.rebase_text", branch = current, onto = onto).into_owned()),
+        t!("merge.rebase").into_owned(),
+        None,
+        move |_, cx| flow(&from, &to, palette(cx)),
+        move |_, cx| {
+            let op = Op::Rebase(onto.clone());
+            repo.update(cx, |repo, cx| repo.run_op(op, cx));
+            true
+        },
+        window,
+        cx,
+    );
+}
+
+/// The three reset modes, one sentence each. Hard says how many changed
+/// files go, and needs a click on the red button (FR-MERGE-04).
+pub fn reset(
+    repo: Entity<RepoState>,
+    branch: String,
+    target: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mode = cx.new(|_| ResetMode::Mixed);
+    let changed = repo.read(cx).status.len();
+    let short: String = target.chars().take(7).collect();
+    window.open_alert_dialog(cx, move |alert, _, cx| {
+        let p = palette(cx);
+        let picked = *mode.read(cx);
+        let option = |id: &'static str, value: ResetMode, title: String, text: String| {
+            let on = picked == value;
+            let handle = mode.clone();
+            h_flex()
+                .id(id)
+                .gap(px(10.))
+                .items_start()
+                .p(px(10.))
+                .rounded(px(8.))
+                .cursor_pointer()
+                .border_1()
+                .border_color(if on { p.accent } else { p.border })
+                .bg(if on { p.bg_selected } else { p.bg_panel })
+                .on_click(move |_, window, cx| {
+                    handle.update(cx, |mode, _| *mode = value);
+                    window.refresh();
+                })
+                .child(
+                    div()
+                        .mt(px(2.))
+                        .size(px(16.))
+                        .flex_none()
+                        .rounded_full()
+                        .border_color(if on { p.accent } else { p.border_strong })
+                        .when(on, |dot| dot.border_4().bg(p.on_accent))
+                        .when(!on, |dot| dot.border_1()),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(if value == ResetMode::Hard {
+                                    p.danger
+                                } else {
+                                    p.text
+                                })
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(p.text_secondary)
+                                .child(text),
+                        ),
+                )
+        };
+        let hard = picked == ResetMode::Hard;
+        let (repo, target) = (repo.clone(), target.clone());
+        let run = move |cx: &mut App| {
+            let op = Op::Reset {
+                target: target.clone(),
+                mode: picked,
+            };
+            repo.update(cx, |repo, cx| repo.run_op(op, cx));
+        };
+        let enter = run.clone();
+        let action = Button::new("confirm").on_click(move |_, window, cx| {
+            run(cx);
+            window.close_dialog(cx);
+        });
+        alert
+            .width(px(480.))
+            .title(t!("reset.title", branch = branch, target = short).into_owned())
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(option(
+                        "reset-soft",
+                        ResetMode::Soft,
+                        t!("reset.soft").into_owned(),
+                        t!("reset.soft_text").into_owned(),
+                    ))
+                    .child(option(
+                        "reset-mixed",
+                        ResetMode::Mixed,
+                        t!("reset.mixed").into_owned(),
+                        t!("reset.mixed_text").into_owned(),
+                    ))
+                    .child(option(
+                        "reset-hard",
+                        ResetMode::Hard,
+                        t!("reset.hard").into_owned(),
+                        t!("reset.hard_text").into_owned(),
+                    ))
+                    .when(hard, |body| {
+                        body.child(
+                            h_flex()
+                                .gap_2()
+                                .p(px(10.))
+                                .rounded(px(8.))
+                                .bg(p.danger_subtle)
+                                .text_size(px(12.))
+                                .child(ic("warning", 14., p.danger))
+                                .child(
+                                    div().flex_1().child(
+                                        t!("reset.hard_warning", count = changed).into_owned(),
+                                    ),
+                                ),
+                        )
+                    }),
+            )
+            // Enter runs a soft or mixed reset. A hard one only closes.
+            .on_ok(move |_, _, cx| {
+                if !hard {
+                    enter(cx);
+                }
+                true
+            })
+            .footer(
+                DialogFooter::new()
+                    .child(
+                        Button::new("cancel")
+                            .label(t!("dialog.cancel").into_owned())
+                            .when(hard, |button| button.primary())
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(if hard {
+                        action.danger().label(t!("reset.action_hard").into_owned())
+                    } else {
+                        action.primary().label(t!("reset.action").into_owned())
+                    }),
+            )
+    });
+}
+
+/// Cherry-picks or reverts a commit. For a merge commit it first asks
+/// which parent the changes are measured against (FR-MERGE-03).
+pub fn pick(
+    repo: Entity<RepoState>,
+    oid: Oid,
+    parents: Vec<Oid>,
+    revert: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let op = move |mainline: Option<u32>| {
+        let oid = oid.to_string();
+        if revert {
+            Op::Revert { oid, mainline }
+        } else {
+            Op::CherryPick { oid, mainline }
+        }
+    };
+    if parents.len() < 2 {
+        repo.update(cx, |repo, cx| repo.run_op(op(None), cx));
+        return;
+    }
+    let mainline = cx.new(|_| 1u32);
+    let body_mainline = mainline.clone();
+    form(
+        t!("merge.mainline_title").into_owned(),
+        Some(t!("merge.mainline_text").into_owned()),
+        if revert {
+            t!("menu_item.revert").into_owned()
+        } else {
+            t!("menu_item.cherry_pick").into_owned()
+        },
+        None,
+        move |_, cx| {
+            let p = palette(cx);
+            let picked = *body_mainline.read(cx);
+            v_flex()
+                .gap_2()
+                .children(parents.iter().enumerate().map(|(ix, parent)| {
+                    let n = ix as u32 + 1;
+                    let handle = body_mainline.clone();
+                    h_flex()
+                        .id(("parent", ix))
+                        .h(px(32.))
+                        .px(px(10.))
+                        .rounded(px(8.))
+                        .cursor_pointer()
+                        .border_1()
+                        .border_color(if picked == n { p.accent } else { p.border })
+                        .bg(if picked == n {
+                            p.bg_selected
+                        } else {
+                            p.bg_panel
+                        })
+                        .on_click(move |_, window, cx| {
+                            handle.update(cx, |mainline, _| *mainline = n);
+                            window.refresh();
+                        })
+                        .child(
+                            t!("merge.parent", n = n, oid = &parent[..7.min(parent.len())])
+                                .into_owned(),
+                        )
+                }))
+                .into_any_element()
+        },
+        move |_, cx| {
+            let chosen = *mainline.read(cx);
+            repo.update(cx, |repo, cx| repo.run_op(op(Some(chosen)), cx));
             true
         },
         window,

@@ -113,6 +113,8 @@ menu:
   branch: "Branch"
   new_branch: "New Branch…"
   window: "Window"
+  commit: "Commit"
+  stage_selection: "Stage or Unstage Selection"
   minimize: "Minimize"
   zoom: "Zoom"
 
@@ -120,6 +122,8 @@ graph:
   retry: "Retry"
   load_failed: "The history could not be loaded."
   head: "HEAD"
+  wip: "Uncommitted changes in %{count} files"
+  wip_none: "No uncommitted changes"
 
 sidebar:
   filter: "Filter"
@@ -148,3 +152,58 @@ search:
   placeholder: "Search commits, author: or file:"
   count: "%{at} of %{count}"
   none: "No commits match."
+
+staging:
+  unstaged: "Unstaged (%{count})"
+  staged: "Staged (%{count})"
+  stage: "Stage"
+  unstage: "Unstage"
+  discard: "Discard"
+  stage_all: "Stage all"
+  unstage_all: "Unstage all"
+  stage_selected: "Stage %{count} selected"
+  unstage_selected: "Unstage %{count} selected"
+  conflicted: "Conflicted"
+  resolve_first: "Resolve the conflicted files before you commit."
+  none_title: "No changes"
+  none_text: "Edit a file in this repository and it will show here."
+
+diff:
+  show_split: "Split view"
+  show_inline: "Inline view"
+  stage_hunk: "Stage hunk"
+  unstage_hunk: "Unstage hunk"
+  discard_hunk: "Discard hunk"
+  lines_selected: "%{count} lines selected"
+  stage_lines: "Stage lines"
+  unstage_lines: "Unstage lines"
+  discard_lines: "Discard lines"
+  clear_lines: "Clear"
+
+commit:
+  summary: "Summary"
+  description: "Description (optional)"
+  amend: "Amend last commit"
+  amend_pushed: "This commit is already on the remote. Amending it will need a force-push."
+  action: "Commit"
+  amend_action: "Amend commit"
+
+discard:
+  title: "Discard changes?"
+  file_text: "Every change in %{path} will be removed, staged or not. An untracked file is deleted. Undo brings it back."
+  files_text: "Every change in %{count} files will be removed, staged or not. Untracked files are deleted. Undo brings them back."
+  lines_text: "%{count} changed lines will be removed from the file on disk. Undo brings them back."
+  action: "Discard"
+
+dialog:
+  cancel: "Cancel"
+
+journal:
+  commit: "Commit \"%{summary}\""
+  discard_files: "Discard changes in %{count} files"
+  discard_lines: "Discard lines in %{path}"
+
+undo:
+  nothing: "Nothing to undo."
+  done: "Undone: %{label}"
+  blocked: "Cannot undo \"%{label}\" because the repository changed since then."

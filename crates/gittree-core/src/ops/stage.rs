@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 
-use crate::error::{GitError, GitErrorKind};
+use crate::error::GitError;
 use crate::model::{FileDiff, Oid, RepoPath};
 use crate::patch::{self, Lines};
 use crate::runner::{Access, GitRunner};
@@ -88,12 +88,7 @@ pub fn discard_files(
 ) -> Result<(), GitError> {
     // Checked before anything is deleted.
     if !runner.trusted() {
-        return Err(GitError {
-            kind: GitErrorKind::Untrusted,
-            args: Vec::new(),
-            exit_code: None,
-            stderr: String::new(),
-        });
+        return Err(GitError::untrusted());
     }
     if !tracked.is_empty() {
         let args: &[&str] = if has_commits {

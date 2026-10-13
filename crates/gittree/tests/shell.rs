@@ -295,3 +295,118 @@ fn browses_history_details_diffs_and_search(cx: &mut TestAppContext) {
         assert_eq!(repo.search.matches, [1, 2]);
     });
 }
+
+#[gpui_kit::test]
+fn stages_commits_amends_discards_and_undoes(cx: &mut TestAppContext) {
+    use gittree::repo_state::{Op, Scope};
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+    let read = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
+    let git_out = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
+    };
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    // The app's own commits need an author.
+    git(dir.path(), &["config", "user.name", "Ada"]);
+    git(dir.path(), &["config", "user.email", "ada@example.com"]);
+    write("a.rs", "fn main() {}\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    let refresh = |cx: &mut TestAppContext| {
+        cx.update(|cx| repo.update(cx, |repo, cx| repo.refresh(Scope::Status, cx)));
+        cx.run_until_parked();
+        shell.in_window(cx, |_, _| ());
+    };
+    let click = |cx: &mut TestAppContext, id: gpui_kit::ElementId| {
+        shell.in_window(cx, |window, cx| window.click(id, cx));
+        // Once more, so the next click sees what this one changed.
+        shell.in_window(cx, |_, _| ());
+    };
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+
+    // No changes, no work-in-progress row.
+    assert!(shell.in_window(cx, |window, _| window.try_find("wip").is_none()));
+    write("a.rs", "fn main() {\n    run();\n}\n");
+    write("new.txt", "new\n");
+    refresh(cx);
+    click(cx, "wip".into());
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        assert_eq!(repo.status.len(), 2);
+        assert!(repo.selection.wip);
+        let (path, staged) = repo.selection.wip_file.clone().unwrap();
+        assert_eq!((path.to_string().as_str(), staged), ("a.rs", false));
+        assert!(repo.selection.diff.is_some());
+    });
+
+    // Commit does nothing without a summary, or with nothing staged.
+    click(cx, "commit".into());
+    click(cx, ("stage", 0usize).into());
+    cx.update(|cx| assert_eq!(repo.read(cx).changes(true).count(), 1));
+    click(cx, "commit".into());
+    assert_eq!(git_out(&["log", "--format=%s"]), "base");
+
+    click(cx, "commit-summary".into());
+    shell.in_window(cx, |window, cx| window.input("Call run", cx));
+    click(cx, "commit".into());
+    assert_eq!(git_out(&["log", "-1", "--format=%B"]), "Call run");
+    assert_eq!(git_out(&["status", "--porcelain"]), "?? new.txt");
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        // The graph has a new first row, and one file is still left.
+        assert_eq!(&*repo.history.commits[0].summary, "Call run");
+        assert!(repo.selection.wip && repo.status.len() == 1);
+    });
+
+    // Amend: the message comes back, and the rest goes into the same commit.
+    click(cx, "stage-all".into());
+    click(cx, "amend".into());
+    click(cx, "commit".into());
+    assert_eq!(git_out(&["log", "--format=%s"]), "Call run\nbase");
+    assert_eq!(git_out(&["status", "--porcelain"]), "");
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        assert_eq!(repo.history.commits.len(), 2);
+        // Nothing is left to commit, so the new commit is selected.
+        assert!(!repo.selection.wip);
+        assert_eq!(
+            repo.selection.oid.as_ref(),
+            Some(&repo.history.commits[0].oid)
+        );
+    });
+    assert!(shell.in_window(cx, |window, _| window.try_find("wip").is_none()));
+
+    // Discard asks first, and Enter means Cancel.
+    let edited = "fn main() {\n    run();\n    more();\n}\n";
+    write("a.rs", edited);
+    refresh(cx);
+    click(cx, "wip".into());
+    click(cx, ("discard", 0usize).into());
+    shell.in_window(cx, |window, cx| window.press("enter", cx));
+    shell.in_window(cx, |_, _| ());
+    assert_eq!(read("a.rs"), edited);
+
+    click(cx, ("discard", 0usize).into());
+    // The dialog slides in over a quarter of a second of real time, and
+    // takes no clicks until it has arrived.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |_, _| ());
+    click(cx, "confirm".into());
+    assert_eq!(read("a.rs"), "fn main() {\n    run();\n}\n");
+
+    // Undo brings the discarded change back, then says there is no more.
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.run_op(Op::Undo, cx)));
+    cx.run_until_parked();
+    assert_eq!(read("a.rs"), edited);
+}

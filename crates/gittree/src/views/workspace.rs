@@ -16,9 +16,12 @@ use rust_i18n::t;
 use super::commit_detail::CommitDetail;
 use super::graph::GraphView;
 use super::sidebar::Sidebar;
-use crate::actions::{FocusGraph, Refresh, SearchCommits, TrustRepository};
+use super::staging::StagingView;
+use crate::actions::{Commit, FocusChanges, FocusGraph, Refresh, SearchCommits, TrustRepository};
 use crate::app_state::AppState;
+use crate::repo_state::Op;
 use crate::repo_state::{RepoState, Scope};
+use gpui_kit::component::input::Undo;
 
 /// The main window for an open repository: toolbar, banner, sidebar, graph
 /// and detail panel.
@@ -30,6 +33,7 @@ pub struct Workspace {
     sidebar: Entity<Sidebar>,
     graph: Entity<GraphView>,
     detail: Entity<CommitDetail>,
+    staging: Entity<StagingView>,
     search: Entity<InputState>,
     focus: FocusHandle,
 }
@@ -82,6 +86,16 @@ impl Workspace {
         .detach();
         cx.observe(&app, |_, _, cx| cx.notify()).detach();
         cx.observe(&repo, |_, _, cx| cx.notify()).detach();
+        // Coming back to the window: files may have changed meanwhile.
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.repo.update(cx, |repo, cx| {
+                    repo.refresh(Scope::Status, cx);
+                    repo.refresh(Scope::Refs, cx);
+                });
+            }
+        })
+        .detach();
 
         let graph = cx.new(|cx| GraphView::new(repo.clone(), cx));
         // Keyboard focus starts on the graph, so arrows and shortcuts work
@@ -91,6 +105,7 @@ impl Workspace {
             path: repo.read(cx).repository.path.clone(),
             sidebar: cx.new(|cx| Sidebar::new(repo.clone(), window, cx)),
             detail: cx.new(|cx| CommitDetail::new(repo.clone(), cx)),
+            staging: cx.new(|cx| StagingView::new(app.clone(), repo.clone(), window, cx)),
             graph,
             panels,
             search,
@@ -170,25 +185,10 @@ impl Render for Workspace {
                 )
         });
 
-        let middle = if repo.has_commits() || !repo.history.commits.is_empty() {
-            self.graph.clone().into_any_element()
+        let right = if repo.selection.wip {
+            self.staging.clone().into_any_element()
         } else {
-            v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_1()
-                .child(
-                    div()
-                        .text_lg()
-                        .child(t!("workspace.no_commits_title").into_owned()),
-                )
-                .child(
-                    div()
-                        .text_color(muted)
-                        .child(t!("workspace.no_commits_text").into_owned()),
-                )
-                .into_any_element()
+            self.detail.clone().into_any_element()
         };
 
         v_flex()
@@ -206,6 +206,19 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &FocusGraph, window, cx| {
                 this.graph.read(cx).focus.clone().focus(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &FocusChanges, window, cx| {
+                this.repo.update(cx, |repo, cx| repo.select_wip(cx));
+                this.staging.read(cx).focus.clone().focus(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &Commit, window, cx| {
+                this.staging
+                    .update(cx, |staging, cx| staging.commit(window, cx));
+            }))
+            // A focused text field takes Cmd+Z for its own text first. It
+            // gets here only from anywhere else.
+            .on_action(cx.listener(|this, _: &Undo, _, cx| {
+                this.repo.update(cx, |repo, cx| repo.run_op(Op::Undo, cx));
+            }))
             .child(toolbar)
             .children(banner)
             .child(
@@ -218,12 +231,12 @@ impl Render for Workspace {
                                 .size_range(px(160.)..px(480.))
                                 .child(self.sidebar.clone()),
                         )
-                        .child(resizable_panel().child(middle))
+                        .child(resizable_panel().child(self.graph.clone()))
                         .child(
                             resizable_panel()
                                 .size(px(detail_size))
                                 .size_range(px(240.)..px(900.))
-                                .child(self.detail.clone()),
+                                .child(right),
                         ),
                 ),
             )

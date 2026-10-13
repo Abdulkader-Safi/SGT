@@ -40,6 +40,9 @@ impl RootView {
             |_, app, event: &AppEvent, window, cx| match event {
                 AppEvent::Error(error) => show_error(error.clone(), window, cx),
                 AppEvent::NotARepository(path) => offer_init(app.clone(), path.clone(), window, cx),
+                AppEvent::Notice(text) => {
+                    window.push_notification(Notification::info(text.clone()), cx)
+                }
             },
         )
         .detach();

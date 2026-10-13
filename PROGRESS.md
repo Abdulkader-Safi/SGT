@@ -13,7 +13,8 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M0: de-risk | Done 2026-10-12. All four targets met, no fallback needed |
 | M1: app shell | Built, 45 tests pass. Waiting on the manual checks listed below |
 | M2: graph and read-only browsing | Built, 57 tests pass. Waiting on the manual checks listed below |
-| M3 to M10 | Not started |
+| M3: staging and commit | Built, 81 tests pass. Waiting on the manual checks listed below |
+| M4 to M10 | Not started |
 
 ## M0: de-risk
 
@@ -179,3 +180,65 @@ History and refs match Git, selecting a commit loads details, files and the firs
 - Any file change refreshes refs, and the log is read again only if refs or HEAD moved. Status refresh arrives with the staging view in M3.
 - No horizontal scrolling in the diff yet: long lines are clipped.
 - Tabs in diff lines are shown as four spaces.
+
+## M3: staging and commit
+
+### First task: the kit's highlighter
+
+GPUI Kit's `SyntaxHighlighter` takes any text, so it can colour the lines of a diff in a custom view. `tree-sitter-highlight` did not need wiring in. All 19 languages of FR-DIFF-03 load with the kit's `tree-sitter-languages` feature, and a test checks each one.
+
+### What exists
+
+- Core: the status parser and `status`, `diff_worktree` (an untracked file is read from disk and shown as all added), the partial patch builder, `stage`, `unstage`, `apply_selection`, `discard_files`, `commit`, and the journal with `begin`, `finish`, `can_undo` and `undo`.
+- `RepoState::run_op`: one change at a time per repository, trust checked first, a journal entry for commits and discards, the file watcher muted while it runs, and one refresh of status and refs when the queue is empty.
+- The work-in-progress row above the graph, with the changed-file count.
+- The staging view: Unstaged and Staged lists with per-file, selected and "all" buttons, the diff of one file, and the commit box with the summary counter, a description, Amend and the message draft kept per repository.
+- The diff pane, shared with commit details: inline or split, syntax colours, hunk buttons, and lines picked by click, Shift-click or drag.
+- Discard for files, hunks and lines, behind a dialog where Enter and Escape both cancel.
+- Undo of the last commit or discard, from Edit > Undo or Cmd+Z when no text field has the focus.
+
+### Checked by tests
+
+- The line-staging table (single add, single remove, mixed hunk, first line, last line, no trailing newline, CRLF, new file), each compared with `git show :path`, with the file on disk unchanged and a full unstage bringing the index back. A renamed file has its own test (FR-STAGE-03).
+- One of two hunks staged leaves only that hunk in `git diff --cached` (FR-STAGE-02).
+- Whole files stage and unstage like Git, also before the first commit (FR-STAGE-01).
+- A discarded file, deleted file and untracked file come back byte for byte on undo, with the index as it was. Discarded lines come back too (FR-STAGE-04).
+- Commit and amend land at HEAD with the exact message, including one that starts with `--`. Undo takes each back, and is refused once HEAD has moved (FR-STAGE-05, FR-STAGE-06).
+- An untrusted repository refuses every change before Git starts, and nothing is deleted.
+- An untracked file with quotes, a tab and a non-ASCII letter in its name stages through the patch header the app writes.
+- Headless UI: the work-in-progress row appears and goes, a file is staged and committed from the commit box, Amend prefills and replaces HEAD, Commit does nothing without a summary or staged files, Enter in the discard dialog cancels, and undo restores the file (FR-GRAPH-04).
+- Split rows pair removed lines with added ones. Rust keywords, strings and comments get three different colours in both themes. An unknown file type is plain text (FR-DIFF-02, FR-DIFF-03).
+
+### Still needs a check by hand
+
+- Picking lines with the mouse: click, Shift-click and drag, then "Stage lines", "Unstage lines" and "Discard lines".
+- Space on a selected file and on picked lines, and that a space typed in the commit message stays a space.
+- Cmd+Enter to commit, from a text field and from the lists. Cmd+2 to open the changes.
+- The counter turning to the warning colour at 73 characters.
+- The amend warning when the last commit is already on its upstream.
+- The message draft surviving a restart.
+- The split view surviving a restart, and both views in the light theme.
+- The toast after undo, and after an undo that is refused.
+- Saving a file in an editor and seeing it appear in the lists within 1 second.
+
+### Decisions
+
+- The work-in-progress row sits above the commit list and does not scroll with it. It shows while there is something to commit, and stays while it is selected, so Cmd+2 can open the staging view on a clean tree to amend only a message.
+- After a commit that leaves nothing to commit, the selection moves to the new commit.
+- Staging and unstaging get no journal entry. They are not in the spec's undo table, and they are undone by their opposite.
+- A failed op clears the ops queued behind it, because those were chosen against a state that did not come about.
+- A partial patch gets a plain "modify this file" header whenever an unselected line stays behind, or the file was renamed. Without that, unstaging one line of a new or renamed file would undo the whole creation or rename.
+- A diff that was cut for its size offers no hunk or line actions until "Load all", because the cut ends mid-hunk.
+- Syntax colours come from parsing the old and new side of the hunks, not the whole file. A colour can be off where a construct began before the hunk.
+
+### Deviations from the spec
+
+- Undo for commits and discards is built now, not in M7, because FR-STAGE-04 needs it. Redo, the Undo and Redo toolbar buttons, the reason shown when undo is refused, the snapshot list and pruning stay in M7.
+- `Journal::begin` takes the action and a label. The refs an action touches come from the action, not from a second argument.
+- A snapshot stores its patch file and untracked folder as paths under `.git/gittree/`, not full paths. The files are found by the entry's ID, which must be a UUID, so a hand-edited journal cannot point undo at another folder.
+- Discarding a file in a repository with no commit yet brings it back untracked on undo, since there is nothing to stash against.
+- Discarding a file removes its staged changes too. That is what `git restore --source=HEAD --staged --worktree` does, and the dialog says so.
+- With an unselected removed line between them, selected added lines land after it. Example: the hunk removes "b" and "c" and adds "B", and only "b" and "B" are staged. The index gets "c" then "B". This is the spec's patch rule, and Git's own interactive staging does the same.
+- Every watcher event reads the status and the refs. The spec splits them by where the change happened. Both reads are cheap, so the split waits for a profile that asks for it.
+- The file lists build every row each frame. That is fine at the 500 changed files of NFR-04.
+- One UI test sleeps 400 ms, because the kit's dialog takes no clicks during its quarter-second entrance and that animation runs on real time.

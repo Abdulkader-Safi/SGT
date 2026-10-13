@@ -78,6 +78,9 @@ pub fn init(cx: &mut App) {
             vec![
                 item("menu.refresh", Box::new(Refresh)),
                 separator(),
+                item("menu.commit", Box::new(Commit)),
+                item("menu.stage_selection", Box::new(StageSelection)),
+                separator(),
                 item("menu.fetch", Box::new(Fetch)),
                 item("menu.pull", Box::new(Pull)),
                 item("menu.push", Box::new(Push)),

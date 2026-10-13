@@ -1,21 +1,28 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use gittree_core::graph::{GraphLayout, GraphRow};
+use gittree_core::journal::{Action, Blocked, Journal};
 use gittree_core::model::{
-    Commit, CommitDetails, FileChange, FileDiff, Head, Oid, Ref, Repository,
+    Change, Commit, CommitDetails, FileChange, FileDiff, Head, Oid, Ref, RepoPath, Repository,
+    StatusEntry,
 };
 use gittree_core::ops::read;
-use gittree_core::{GitError, GitRunner};
+use gittree_core::ops::stage::{self, Target};
+use gittree_core::patch::{self, Lines};
+use gittree_core::{GitError, GitErrorKind, GitRunner};
 use gpui_kit::{AppContext, Context, EventEmitter, Task};
 use notify::Watcher;
+use rust_i18n::t;
 
 /// What to read again from Git.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
+    /// Changed, staged and untracked files.
+    Status,
     /// Refs and HEAD. The log follows if they moved.
     Refs,
     Log,
@@ -27,6 +34,43 @@ pub enum RepoEvent {
     Error(GitError),
     /// The graph should bring this row into view.
     Reveal(usize),
+    /// A commit was made, so the commit box can clear.
+    Committed,
+    /// The message of the commit that Amend would replace.
+    HeadMessage(String),
+    /// Something the user should read, already in plain words.
+    Notice(String),
+}
+
+/// A change to the repository. `RepoState::run_op` is the only way to make
+/// one.
+#[derive(Debug, Clone)]
+pub enum Op {
+    Stage(Vec<RepoPath>),
+    Unstage(Vec<RepoPath>),
+    /// Stages, unstages or discards the chosen lines of a diff.
+    Apply {
+        diff: Arc<FileDiff>,
+        lines: Lines,
+        target: Target,
+    },
+    DiscardFiles {
+        tracked: Vec<RepoPath>,
+        untracked: Vec<RepoPath>,
+    },
+    Commit {
+        message: String,
+        amend: bool,
+    },
+    /// Takes back the last commit or discard.
+    Undo,
+}
+
+/// What a finished op has to tell the UI.
+enum Done {
+    Changed,
+    Committed(Oid),
+    Notice(String),
 }
 
 /// The commit list with its graph rows.
@@ -61,14 +105,20 @@ impl History {
     }
 }
 
-/// The commit shown in the detail panel.
+/// What the detail panel shows: a commit, or the work in progress.
 #[derive(Default)]
 pub struct Selection {
     pub oid: Option<Oid>,
     pub details: Option<CommitDetails>,
     pub files: Vec<FileChange>,
     pub file: Option<usize>,
-    pub diff: Option<FileDiff>,
+    /// The work-in-progress row is selected, so the staging view shows.
+    pub wip: bool,
+    /// The changed file whose diff shows, and whether its staged side does.
+    pub wip_file: Option<(RepoPath, bool)>,
+    /// The diff of the selected file, of a commit or of the work in
+    /// progress. It is swapped for a new `Arc` only when it changes.
+    pub diff: Option<Arc<FileDiff>>,
     pub diff_loading: bool,
 }
 
@@ -98,6 +148,17 @@ pub struct RepoState {
     pub refs_at: HashMap<Oid, Vec<usize>>,
     pub selection: Selection,
     pub search: Search,
+    pub status: Vec<StatusEntry>,
+    /// An op is running. Views grey out their buttons meanwhile.
+    pub busy: bool,
+    ops: VecDeque<Op>,
+    journal: Journal,
+    /// Set by a commit: once nothing is left to commit, the selection moves
+    /// from the work-in-progress row to this commit.
+    after_commit: Option<Oid>,
+    op_task: Task<()>,
+    status_task: Task<()>,
+    message_task: Task<()>,
     // A result is dropped unless its generation is still the current one.
     log_generation: u64,
     log_cancel: Arc<AtomicBool>,
@@ -113,6 +174,7 @@ impl EventEmitter<RepoEvent> for RepoState {}
 
 impl RepoState {
     pub fn new(repository: Repository, runner: GitRunner, cx: &mut Context<Self>) -> Self {
+        let journal = Journal::new(&repository.common_dir);
         let mut this = Self {
             _watch: watch(&repository.path, cx),
             repository,
@@ -124,6 +186,14 @@ impl RepoState {
             refs_at: HashMap::new(),
             selection: Selection::default(),
             search: Search::default(),
+            status: Vec::new(),
+            busy: false,
+            ops: VecDeque::new(),
+            journal,
+            after_commit: None,
+            op_task: Task::ready(()),
+            status_task: Task::ready(()),
+            message_task: Task::ready(()),
             log_generation: 0,
             log_cancel: Default::default(),
             log_task: Task::ready(()),
@@ -149,13 +219,261 @@ impl RepoState {
 
     pub fn refresh(&mut self, scope: Scope, cx: &mut Context<Self>) {
         match scope {
+            Scope::Status => self.refresh_status(cx),
             Scope::Refs => self.refresh_refs(false, cx),
             Scope::Log => self.reload_log(cx),
             Scope::All => {
+                self.refresh_status(cx);
                 self.refresh_refs(true, cx);
                 self.reload_log(cx);
             }
         }
+    }
+
+    /// Reads the changed files. A failure is logged and otherwise silent:
+    /// the next trigger tries again.
+    fn refresh_status(&mut self, cx: &mut Context<Self>) {
+        let runner = self.runner.clone();
+        self.status_task = cx.spawn(async move |this, cx| {
+            let mut result = Err(None);
+            for attempt in 0..2 {
+                let runner = runner.clone();
+                result = cx
+                    .background_spawn(async move { read::status(&runner) })
+                    .await
+                    .map_err(Some);
+                let locked = matches!(&result, Err(Some(e)) if e.kind == GitErrorKind::IndexLocked);
+                if !locked || attempt == 1 {
+                    break;
+                }
+                // Another Git process holds the index. One more try.
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+            }
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(status) => this.set_status(status, cx),
+                Err(error) => tracing::warn!(?error, "status failed"),
+            });
+        });
+    }
+
+    fn set_status(&mut self, mut status: Vec<StatusEntry>, cx: &mut Context<Self>) {
+        // Conflicted files first, then by path as Git lists them.
+        status.sort_by_key(|entry| entry.conflict.is_none());
+        self.status = status;
+        let after_commit = self.after_commit.take();
+        if self.selection.wip {
+            match after_commit {
+                Some(oid) if self.status.is_empty() => {
+                    self.select(Some(oid), cx);
+                    return;
+                }
+                _ => self.reselect_wip_file(cx),
+            }
+        }
+        cx.notify();
+    }
+
+    /// The changed files of one list.
+    pub fn changes(&self, staged: bool) -> impl Iterator<Item = &StatusEntry> {
+        self.status.iter().filter(move |entry| {
+            if staged {
+                entry.staged()
+            } else {
+                entry.unstaged()
+            }
+        })
+    }
+
+    /// The work-in-progress row shows while there is something to commit,
+    /// and stays while it is selected.
+    pub fn wip_visible(&self) -> bool {
+        !self.status.is_empty() || self.selection.wip
+    }
+
+    /// Selects the work-in-progress row, which opens the staging view.
+    pub fn select_wip(&mut self, cx: &mut Context<Self>) {
+        if self.selection.wip {
+            return;
+        }
+        self.selection = Selection {
+            wip: true,
+            ..Default::default()
+        };
+        self.details_task = Task::ready(());
+        self.diff_task = Task::ready(());
+        self.after_commit = None;
+        self.reselect_wip_file(cx);
+        cx.notify();
+    }
+
+    /// Keeps the selected changed file if it is still in its list, else
+    /// moves to the first file of that list, else of the other one. Its
+    /// diff is read again either way, since the file may have changed.
+    fn reselect_wip_file(&mut self, cx: &mut Context<Self>) {
+        let wanted = self.selection.wip_file.take();
+        let side = wanted.as_ref().is_some_and(|(_, staged)| *staged);
+        let still =
+            wanted.filter(|(path, staged)| self.changes(*staged).any(|entry| &entry.path == path));
+        let first = |staged: bool| {
+            self.changes(staged)
+                .next()
+                .map(|e| (e.path.clone(), staged))
+        };
+        match still.or_else(|| first(side)).or_else(|| first(!side)) {
+            Some((path, staged)) => self.select_wip_file(path, staged, false, cx),
+            None => {
+                self.selection.diff = None;
+                self.selection.diff_loading = false;
+                self.diff_task = Task::ready(());
+            }
+        }
+    }
+
+    /// Shows the diff of a changed file: its staged side, or what is not
+    /// staged yet. `load_all` lifts the cut on a very large diff.
+    pub fn select_wip_file(
+        &mut self,
+        path: RepoPath,
+        staged: bool,
+        load_all: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self
+            .changes(staged)
+            .find(|entry| entry.path == path)
+            .cloned()
+        else {
+            return;
+        };
+        let file = Some((path, staged));
+        if self.selection.wip_file != file {
+            self.selection.diff = None;
+        }
+        self.selection.wip_file = file.clone();
+        self.selection.diff_loading = true;
+        // A reload keeps a cut diff cut, and a fully loaded one whole.
+        let load_all = load_all
+            || self.selection.diff.as_ref().is_some_and(|diff| {
+                !matches!(diff.kind, gittree_core::model::DiffKind::TooLarge { .. })
+                    && diff.hunks.iter().map(|h| h.lines.len()).sum::<usize>()
+                        > read::LARGE_DIFF_LINES
+            });
+        cx.notify();
+        let runner = self.runner.clone();
+        let read =
+            cx.background_spawn(
+                async move { read::diff_worktree(&runner, &entry, staged, load_all) },
+            );
+        self.diff_task = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.selection.wip || this.selection.wip_file != file {
+                    return;
+                }
+                this.selection.diff_loading = false;
+                match result {
+                    Ok(diff) => this.set_diff(diff),
+                    Err(error) => cx.emit(RepoEvent::Error(error)),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// Loads all of a diff that was cut for its size.
+    pub fn load_whole_diff(&mut self, cx: &mut Context<Self>) {
+        if let Some((path, staged)) = self
+            .selection
+            .wip_file
+            .clone()
+            .filter(|_| self.selection.wip)
+        {
+            self.select_wip_file(path, staged, true, cx);
+        } else if let Some(file) = self.selection.file {
+            self.select_file(file, true, cx);
+        }
+    }
+
+    /// Keeps the old `Arc` when the diff did not change, so views can tell
+    /// a new diff from a reload by its address.
+    fn set_diff(&mut self, diff: FileDiff) {
+        if self.selection.diff.as_deref() != Some(&diff) {
+            self.selection.diff = Some(Arc::new(diff));
+        }
+    }
+
+    /// Queues a change. Ops run one at a time. An op that can destroy work
+    /// or move HEAD gets a journal entry, and the status and refs are read
+    /// again when it ends.
+    pub fn run_op(&mut self, op: Op, cx: &mut Context<Self>) {
+        if !self.runner.trusted() {
+            cx.emit(RepoEvent::Error(GitError::untrusted()));
+            return;
+        }
+        self.ops.push_back(op);
+        if !self.busy {
+            self.next_op(cx);
+        }
+    }
+
+    fn next_op(&mut self, cx: &mut Context<Self>) {
+        let Some(op) = self.ops.pop_front() else {
+            self.busy = false;
+            // The watcher was muted while ops ran. One refresh covers them.
+            self.refresh_status(cx);
+            self.refresh_refs(false, cx);
+            cx.notify();
+            return;
+        };
+        self.busy = true;
+        cx.notify();
+        let (runner, journal) = (self.runner.clone(), self.journal.clone());
+        let has_commits = self.has_commits();
+        let label = op_label(&op);
+        let run =
+            cx.background_spawn(async move { execute(op, &runner, &journal, has_commits, label) });
+        self.op_task = cx.spawn(async move |this, cx| {
+            let result = run.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(Done::Changed) => {}
+                    Ok(Done::Committed(oid)) => {
+                        this.after_commit = Some(oid);
+                        cx.emit(RepoEvent::Committed);
+                    }
+                    Ok(Done::Notice(text)) => cx.emit(RepoEvent::Notice(text)),
+                    Err(error) => {
+                        // What was queued behind a failed op was chosen
+                        // against a state that did not come about.
+                        this.ops.clear();
+                        cx.emit(RepoEvent::Error(error));
+                    }
+                }
+                this.next_op(cx);
+            });
+        });
+    }
+
+    /// Reads the last commit's message, for the Amend toggle.
+    pub fn load_head_message(&mut self, cx: &mut Context<Self>) {
+        let runner = self.runner.clone();
+        let read = cx.background_spawn(async move { runner.read(["log", "-1", "--format=%B"]) });
+        self.message_task = cx.spawn(async move |this, cx| {
+            if let Ok(out) = read.await {
+                let message = String::from_utf8_lossy(&out).trim_end().to_owned();
+                let _ = this.update(cx, |_, cx| cx.emit(RepoEvent::HeadMessage(message)));
+            }
+        });
+    }
+
+    /// True when the last commit is already on its upstream, so amending it
+    /// will need a force-push.
+    pub fn head_is_pushed(&self) -> bool {
+        self.refs
+            .iter()
+            .any(|r| r.is_current && r.upstream.is_some() && r.ahead == 0)
     }
 
     /// Reads refs and HEAD. If they moved, the log is read again too.
@@ -257,13 +575,14 @@ impl RepoState {
 
     /// Selects a commit and loads its details and files.
     pub fn select(&mut self, oid: Option<Oid>, cx: &mut Context<Self>) {
-        if self.selection.oid == oid {
+        if self.selection.oid == oid && !self.selection.wip {
             return;
         }
         self.selection = Selection {
             oid: oid.clone(),
             ..Default::default()
         };
+        self.after_commit = None;
         self.diff_task = Task::ready(());
         cx.notify();
         let Some(oid) = oid else {
@@ -320,10 +639,19 @@ impl RepoState {
     }
 
     /// Moves the selection by `delta` rows, stopping at the ends.
+    /// The work-in-progress row, when it shows, sits above the first commit.
     pub fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         let last = self.history.commits.len().saturating_sub(1) as isize;
         let from = self.selected_row().map_or(-1, |row| row as isize);
-        self.select_row((from + delta).clamp(0, last) as usize, cx);
+        let to = from + delta;
+        if self.selection.wip && delta < 0 {
+            return;
+        }
+        if to < 0 && from >= 0 && self.wip_visible() {
+            self.select_wip(cx);
+            return;
+        }
+        self.select_row(to.clamp(0, last) as usize, cx);
     }
 
     /// Loads the diff of one of the selected commit's files. `load_all`
@@ -334,6 +662,9 @@ impl RepoState {
             return;
         };
         let file = file.clone();
+        if self.selection.file != Some(ix) {
+            self.selection.diff = None;
+        }
         self.selection.file = Some(ix);
         self.selection.diff_loading = true;
         cx.notify();
@@ -350,7 +681,7 @@ impl RepoState {
                 }
                 this.selection.diff_loading = false;
                 match result {
-                    Ok(diff) => this.selection.diff = Some(diff),
+                    Ok(diff) => this.set_diff(diff),
                     Err(error) => cx.emit(RepoEvent::Error(error)),
                 }
                 cx.notify();
@@ -446,6 +777,129 @@ impl RepoState {
     }
 }
 
+/// The undo tooltip text of an op that gets a journal entry.
+fn op_label(op: &Op) -> String {
+    match op {
+        Op::Commit { message, .. } => {
+            let summary = message.lines().next().unwrap_or_default();
+            t!("journal.commit", summary = summary).into_owned()
+        }
+        Op::DiscardFiles { tracked, untracked } => t!(
+            "journal.discard_files",
+            count = tracked.len() + untracked.len()
+        )
+        .into_owned(),
+        Op::Apply { diff, .. } => {
+            let path = diff.new_path.as_ref().or(diff.old_path.as_ref());
+            let path = path.map(ToString::to_string).unwrap_or_default();
+            t!("journal.discard_lines", path = path).into_owned()
+        }
+        Op::Stage(_) | Op::Unstage(_) | Op::Undo => String::new(),
+    }
+}
+
+/// Runs one op on the background executor.
+fn execute(
+    op: Op,
+    runner: &GitRunner,
+    journal: &Journal,
+    has_commits: bool,
+    label: String,
+) -> Result<Done, GitError> {
+    // Snapshot, run, then record. A failed action leaves no entry behind.
+    let journaled = |action: Action, run: &dyn Fn() -> Result<Done, GitError>| {
+        let pending = journal.begin(runner, action, label.clone())?;
+        match run() {
+            Ok(done) => journal.finish(runner, pending).map(|_| done),
+            Err(error) => {
+                journal.abandon(runner, pending);
+                Err(error)
+            }
+        }
+    };
+    match op {
+        Op::Stage(paths) => stage::stage(runner, &paths).map(|()| Done::Changed),
+        Op::Unstage(paths) => stage::unstage(runner, &paths, has_commits).map(|()| Done::Changed),
+        Op::Apply {
+            diff,
+            lines,
+            target: Target::Discard,
+        } => {
+            let (Some(patch), Some(path)) = (patch::build(&diff, &lines, true), &diff.new_path)
+            else {
+                return Ok(Done::Changed);
+            };
+            let action = Action::DiscardLines {
+                path: path.clone(),
+                patch: patch.clone(),
+            };
+            journaled(action, &|| {
+                stage::apply_patch(runner, &patch, Target::Discard).map(|()| Done::Changed)
+            })
+        }
+        Op::Apply {
+            diff,
+            lines,
+            target,
+        } => stage::apply_selection(runner, &diff, &lines, target).map(|()| Done::Changed),
+        Op::DiscardFiles { tracked, untracked } => {
+            let action = Action::DiscardFiles {
+                tracked: tracked.clone(),
+                untracked: untracked.clone(),
+            };
+            journaled(action, &|| {
+                stage::discard_files(runner, &tracked, &untracked, has_commits)
+                    .map(|()| Done::Changed)
+            })
+        }
+        Op::Commit { message, amend } => {
+            let action = Action::Commit {
+                message: message.clone(),
+                amend,
+            };
+            journaled(action, &|| {
+                stage::commit(runner, &message, amend).map(Done::Committed)
+            })
+        }
+        Op::Undo => {
+            let entries = journal.entries();
+            let Some(entry) = entries.iter().rev().find(|entry| !entry.undone) else {
+                return Ok(Done::Notice(t!("undo.nothing").into_owned()));
+            };
+            match journal.can_undo(runner, entry) {
+                Ok(()) => {
+                    journal.undo(runner, entry)?;
+                    Ok(Done::Notice(
+                        t!("undo.done", label = entry.label).into_owned(),
+                    ))
+                }
+                Err(Blocked::RepositoryChanged | Blocked::AlreadyUndone) => Ok(Done::Notice(
+                    t!("undo.blocked", label = entry.label).into_owned(),
+                )),
+            }
+        }
+    }
+}
+
+/// The paths to pass Git for whole-file actions on these entries. A renamed
+/// file needs both of its names.
+pub fn entry_paths<'a>(entries: impl IntoIterator<Item = &'a StatusEntry>) -> Vec<RepoPath> {
+    entries
+        .into_iter()
+        .flat_map(|entry| entry.orig_path.iter().chain([&entry.path]).cloned())
+        .collect()
+}
+
+/// Splits entries into tracked and untracked paths, for a discard.
+pub fn discard_paths<'a>(
+    entries: impl IntoIterator<Item = &'a StatusEntry>,
+) -> (Vec<RepoPath>, Vec<RepoPath>) {
+    let (untracked, tracked): (Vec<_>, Vec<_>) = entries
+        .into_iter()
+        .partition(|entry| entry.worktree == Change::Untracked);
+    (entry_paths(tracked), entry_paths(untracked))
+}
+
 /// Rows whose commit matches a query that is not a `file:` search.
 // ponytail: a linear scan with a lower-cased copy per commit. About 10 ms
 // for 100,000 commits. Build an index if search ever feels slow.
@@ -511,11 +965,18 @@ fn watch(path: &Path, cx: &mut Context<RepoState>) -> Task<()> {
                 .timer(Duration::from_millis(300))
                 .await;
             while events.try_recv().is_ok() {}
-            // M2 has no status view, so every change only needs the refs.
-            if this
-                .update(cx, |this, cx| this.refresh(Scope::Refs, cx))
-                .is_err()
-            {
+            // ponytail: every event reads the status and the refs. Both are
+            // cheap. Split by path (Git folder or working tree) if a huge
+            // repository makes this show in a profile.
+            let live = this.update(cx, |this, cx| {
+                // An op refreshes when it ends, and its own writes should
+                // not start a second refresh.
+                if !this.busy {
+                    this.refresh(Scope::Status, cx);
+                    this.refresh(Scope::Refs, cx);
+                }
+            });
+            if live.is_err() {
                 return;
             }
         }

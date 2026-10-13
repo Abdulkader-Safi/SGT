@@ -193,6 +193,10 @@ impl Journal {
         action: Action,
         label: String,
     ) -> Result<PendingEntry, GitError> {
+        // A snapshot writes into the repository, so trust comes first.
+        if !runner.trusted() {
+            return Err(GitError::untrusted());
+        }
         let id = new_id().map_err(io_error)?;
         let head_before = head_state(runner);
         let touched: Vec<String> = match &action {

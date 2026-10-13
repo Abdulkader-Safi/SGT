@@ -24,6 +24,8 @@ actions!(
         FocusGraph,
         FocusChanges,
         ToggleDiffView,
+        Commit,
+        StageSelection,
         Refresh,
         Fetch,
         Pull,
@@ -57,6 +59,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-s", Stash, None),
         KeyBinding::new("cmd-b", NewBranch, None),
         KeyBinding::new("cmd-m", Minimize, None),
+        KeyBinding::new("cmd-enter", Commit, None),
+        // Only while the changed files or their diff have the focus, so a
+        // space typed into the commit message stays a space.
+        KeyBinding::new("space", StageSelection, Some("Changes")),
     ]);
 
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -64,6 +70,21 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(|_: &OpenSettings, cx| crate::views::settings::open(cx));
+    cx.on_action(|_: &ToggleDiffView, cx| {
+        use gittree_core::store::DiffView::{Inline, Split};
+        app_state(cx).update(cx, |app, cx| {
+            app.update_settings(
+                |settings| {
+                    settings.diff_view = if settings.diff_view == Split {
+                        Inline
+                    } else {
+                        Split
+                    }
+                },
+                cx,
+            )
+        })
+    });
     cx.on_action(|_: &OpenRepository, cx| pick_folder(cx, Pick::Open));
     cx.on_action(|_: &InitRepository, cx| pick_folder(cx, Pick::Init));
     cx.on_action(|_: &CloseRepository, cx| app_state(cx).update(cx, |app, cx| app.close_repo(cx)));

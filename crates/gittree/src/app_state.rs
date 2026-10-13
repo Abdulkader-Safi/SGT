@@ -43,6 +43,8 @@ pub enum AppEvent {
     Error(GitError),
     /// The folder the user chose is not a repository.
     NotARepository(PathBuf),
+    /// Something to tell the user, already in plain words.
+    Notice(String),
 }
 
 type SaveJob = Box<dyn FnOnce(&Store) + Send>;
@@ -225,10 +227,10 @@ impl AppState {
         let runner = GitRunner::new(git, &repository.path, repository.trusted);
         let repo = cx.new(|cx| RepoState::new(repository, runner, cx));
         // A view shows these. AppState only passes them on.
-        cx.subscribe(&repo, |_, _, event: &RepoEvent, cx| {
-            if let RepoEvent::Error(error) = event {
-                cx.emit(AppEvent::Error(error.clone()));
-            }
+        cx.subscribe(&repo, |_, _, event: &RepoEvent, cx| match event {
+            RepoEvent::Error(error) => cx.emit(AppEvent::Error(error.clone())),
+            RepoEvent::Notice(text) => cx.emit(AppEvent::Notice(text.clone())),
+            _ => {}
         })
         .detach();
         self.repo = Some(repo);

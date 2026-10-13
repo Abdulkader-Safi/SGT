@@ -48,6 +48,19 @@ pub struct GitError {
     pub stderr: String,
 }
 
+impl GitError {
+    /// The refusal of a change to a repository that is not trusted, made
+    /// before anything runs.
+    pub fn untrusted() -> Self {
+        Self {
+            kind: GitErrorKind::Untrusted,
+            args: Vec::new(),
+            exit_code: None,
+            stderr: String::new(),
+        }
+    }
+}
+
 /// Works out the kind of a failed call from Git's error text. Git gives no
 /// machine-readable reason for these, so this reads stderr, which is always
 /// in English because every call sets `LC_ALL=C`.

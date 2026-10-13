@@ -8,7 +8,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, Context, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, Render, ScrollStrategy, SharedString, StatefulInteractiveElement, Styled,
-    UniformListScrollHandle, Window, div, px, uniform_list,
+    TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use rust_i18n::t;
 
@@ -211,14 +211,69 @@ impl Render for GraphView {
         .track_scroll(&self.scroll)
         .size_full();
 
-        div()
+        // The work in progress sits above the newest commit (FR-GRAPH-04).
+        let wip = repo.wip_visible().then(|| {
+            let (handle, focus) = (self.repo.clone(), self.focus.clone());
+            let text = if repo.status.is_empty() {
+                t!("graph.wip_none").into_owned()
+            } else {
+                t!("graph.wip", count = repo.status.len()).into_owned()
+            };
+            h_flex()
+                .id("wip")
+                .h(ROW_HEIGHT)
+                .flex_none()
+                .w_full()
+                .px_2()
+                .gap_2()
+                .cursor_pointer()
+                .when(repo.selection.wip, |row| row.bg(selected_bg))
+                .on_click(move |_, window, cx| {
+                    focus.focus(window, cx);
+                    handle.update(cx, |repo, cx| repo.select_wip(cx));
+                })
+                .child(
+                    div()
+                        .size(px(10.))
+                        .flex_none()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(muted),
+                )
+                .child(div().flex_1().truncate().child(text))
+                // Lets the headless tests find and click the row.
+                .test_support()
+        });
+        let body = if repo.history.commits.is_empty() {
+            v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_1()
+                .child(
+                    div()
+                        .text_lg()
+                        .child(t!("workspace.no_commits_title").into_owned()),
+                )
+                .child(
+                    div()
+                        .text_color(muted)
+                        .child(t!("workspace.no_commits_text").into_owned()),
+                )
+                .into_any_element()
+        } else {
+            list.into_any_element()
+        };
+
+        v_flex()
             .id("graph-panel")
             .size_full()
             .bg(background)
             .text_sm()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
-            .child(list)
+            .children(wip)
+            .child(div().flex_1().overflow_hidden().child(body))
             .into_any_element()
     }
 }

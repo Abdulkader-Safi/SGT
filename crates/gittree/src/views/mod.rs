@@ -1,9 +1,12 @@
 pub mod commit_detail;
+pub mod dialogs;
+pub mod diff;
 pub mod git_check;
 pub mod graph;
 pub mod graph_element;
 pub mod root;
 pub mod settings;
 pub mod sidebar;
+pub mod staging;
 pub mod welcome;
 pub mod workspace;

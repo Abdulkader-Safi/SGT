@@ -13,10 +13,14 @@ Early development. What works today:
 - A sidebar listing local branches, remotes, tags and stashes, with a name filter.
 - Commit details: message, author, committer, parents, changed files and an inline diff per file.
 - Search by message, author or hash, plus `author:` and `file:` searches.
+- Staging: whole files, single hunks or chosen lines. Unstage and discard the same way, with a confirmation before anything is discarded.
+- Commit and amend, with the message kept as a draft until it is used.
+- Inline and split diffs with syntax colours for 19 languages.
+- Undo for the last commit or discard.
 - The view updates by itself when the repository changes on disk.
 - Settings, light and dark themes, and the window layout restored at launch.
 
-Not built yet: staging and committing, branch and tag actions, merge and rebase, conflict resolution, fetch, pull, push, undo. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
+Not built yet: branch and tag actions, stash, merge and rebase, conflict resolution, clone, fetch, pull, push, and undo for more than commits and discards. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
 
 ## Requirements
 

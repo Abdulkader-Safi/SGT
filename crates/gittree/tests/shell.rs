@@ -929,3 +929,90 @@ fn shows_blame_and_history_of_a_file(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update(|cx| assert!(repo.read(cx).file_view.is_none()));
 }
+
+/// FR-AGENT-04: a session gets a worktree on a new branch, the agent runs
+/// in it with the task as its last argument, and a clean session can be
+/// removed. A stand-in script plays the agent.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn an_agent_session_runs_in_its_own_worktree(cx: &mut TestAppContext) {
+    use gittree_core::agent::{AgentKind, SessionState};
+    use std::os::unix::fs::PermissionsExt;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() {}\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    let script = outside.path().join("agent.sh");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\necho \"$1\" > task.txt\necho all done\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let worktree = gittree_core::ops::setup::canonical(outside.path()).join("wt");
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    let wait = |cx: &mut TestAppContext, done: &dyn Fn(&gittree::repo_state::RepoState) -> bool| {
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if cx.update(|cx| done(repo.read(cx))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("timed out");
+    };
+
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.start_session(
+                AgentKind::Other,
+                script.to_str().unwrap(),
+                "write the file",
+                "agent/write".into(),
+                worktree.clone(),
+                cx,
+            )
+        })
+    });
+    wait(cx, &|repo| {
+        repo.sessions
+            .first()
+            .is_some_and(|s| s.state != SessionState::Working)
+    });
+    shell.in_window(cx, |_, _| ());
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        let session = &repo.sessions[0];
+        assert_eq!(
+            (session.state, session.note.as_str(), session.base.as_str()),
+            (SessionState::Done, "all done", "main")
+        );
+        assert!(repo.show_agents);
+        // The app made the worktree, so it is on the trust list.
+        assert!(shell.app.read(cx).trust.contains(&worktree));
+    });
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("task.txt")).unwrap(),
+        "write the file\n"
+    );
+    // The main working tree was left alone.
+    assert!(!dir.path().join("task.txt").exists());
+
+    // Its new file keeps the worktree from being removed.
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.remove_session("agent/write", cx)));
+    wait(cx, &|repo| !repo.busy);
+    assert!(worktree.join("task.txt").exists());
+    cx.update(|cx| assert_eq!(repo.read(cx).sessions.len(), 1));
+    std::fs::remove_file(worktree.join("task.txt")).unwrap();
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.remove_session("agent/write", cx)));
+    wait(cx, &|repo| repo.sessions.is_empty());
+    assert!(!worktree.exists());
+}

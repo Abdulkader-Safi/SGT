@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use gittree_core::agent::{self, AgentKind, Session, SessionState};
 use gittree_core::graph::{GraphLayout, GraphRow};
 use gittree_core::journal::{Action, Blocked, Journal};
 use gittree_core::model::{
@@ -16,6 +17,7 @@ use gittree_core::ops::merge::{self, InProgressOp, OpKind, ResetMode, Side};
 use gittree_core::ops::read;
 use gittree_core::ops::remote::{self, Progress, Remote};
 use gittree_core::ops::stage::{self, Target};
+use gittree_core::ops::worktree;
 use gittree_core::parse::conflict::{Choice, Region, parse_conflicts, resolve};
 use gittree_core::patch::{self, Lines};
 use gittree_core::store::PullMode;
@@ -38,6 +40,8 @@ pub enum Scope {
 pub enum RepoEvent {
     /// A Git call failed and the user should hear about it.
     Error(GitError),
+    /// The app made this worktree, so it joins the trust list.
+    WorktreeCreated(std::path::PathBuf),
     /// The graph should bring this row into view.
     Reveal(usize),
     /// A commit was made, so the commit box can clear.
@@ -161,6 +165,12 @@ pub enum Op {
         url: String,
     },
     RemoveRemote(String),
+    /// Makes the worktree and branch of an agent session.
+    StartSession {
+        path: std::path::PathBuf,
+        branch: String,
+    },
+    RemoveWorktree(std::path::PathBuf),
     /// Takes back the last undoable action.
     Undo,
     /// Runs the last undone action again.
@@ -252,6 +262,9 @@ enum Done {
     Conflict,
     Committed(Oid),
     Notice(String),
+    /// The worktree of the waiting session exists.
+    SessionReady,
+    WorktreeRemoved(std::path::PathBuf),
 }
 
 /// The commit list with its graph rows.
@@ -355,6 +368,14 @@ pub struct RepoState {
     /// Indexes into `refs`, by the commit each points at.
     pub refs_at: HashMap<Oid, Vec<usize>>,
     pub selection: Selection,
+    /// Agent sessions, oldest first. Saved in the repository's own folder.
+    pub sessions: Vec<Session>,
+    /// The sessions view shows in place of the graph.
+    pub show_agents: bool,
+    /// The command and session that start once their worktree exists.
+    pending_session: Option<(Vec<String>, Session)>,
+    /// Each running agent, by its branch, with the flag that stops it.
+    agents: Vec<(String, Arc<AtomicBool>, Task<()>)>,
     pub file_view: Option<FileView>,
     file_task: Task<()>,
     pub search: Search,
@@ -444,7 +465,12 @@ impl RepoState {
             search_task: Task::ready(()),
             file_view: None,
             file_task: Task::ready(()),
+            sessions: Vec::new(),
+            show_agents: false,
+            pending_session: None,
+            agents: Vec::new(),
         };
+        this.sessions = agent::load(&this.repository.common_dir);
         this.refresh(Scope::All, cx);
         // Old journal entries go once per open, quietly.
         let (journal, runner) = (this.journal.clone(), this.runner.clone());
@@ -732,7 +758,13 @@ impl RepoState {
                         cx.emit(RepoEvent::Committed);
                     }
                     Ok(Done::Notice(text)) => cx.emit(RepoEvent::Notice(text)),
+                    Ok(Done::SessionReady) => this.session_ready(cx),
+                    Ok(Done::WorktreeRemoved(path)) => {
+                        this.sessions.retain(|session| session.path != path);
+                        this.save_sessions();
+                    }
                     Err(error) => {
+                        this.pending_session = None;
                         // What was queued behind a failed op was chosen
                         // against a state that did not come about.
                         this.ops.clear();
@@ -1181,6 +1213,132 @@ impl RepoState {
         });
     }
 
+    pub fn toggle_agents(&mut self, cx: &mut Context<Self>) {
+        self.show_agents = !self.show_agents;
+        cx.notify();
+    }
+
+    fn save_sessions(&self) {
+        if let Err(error) = agent::save(&self.repository.common_dir, &self.sessions) {
+            tracing::error!(%error, "could not save the agent sessions");
+        }
+    }
+
+    /// Starts an agent on `task` in a new worktree at `path`, on a new
+    /// branch off the current commit. The agent runs once the worktree is
+    /// there.
+    pub fn start_session(
+        &mut self,
+        kind: AgentKind,
+        custom: &str,
+        task: &str,
+        branch: String,
+        path: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let argv = match agent::command(kind, custom, task) {
+            Ok(argv) => argv,
+            Err(problem) => return cx.emit(RepoEvent::Notice(problem)),
+        };
+        let base = match &self.repository.head {
+            Head::Branch(name) | Head::Unborn(name) => name.clone(),
+            Head::Detached(oid) => oid.to_string(),
+        };
+        let agent = match kind {
+            AgentKind::Other => argv[0].clone(),
+            known => known.label().to_owned(),
+        };
+        let session = Session {
+            agent,
+            task: task.trim().to_owned(),
+            branch: branch.clone(),
+            base,
+            path: path.clone(),
+            state: SessionState::Working,
+            note: String::new(),
+        };
+        self.pending_session = Some((argv, session));
+        self.show_agents = true;
+        self.run_op(Op::StartSession { path, branch }, cx);
+    }
+
+    /// The worktree exists: list the session and run its agent.
+    fn session_ready(&mut self, cx: &mut Context<Self>) {
+        let Some((argv, session)) = self.pending_session.take() else {
+            return;
+        };
+        let (branch, path) = (session.branch.clone(), session.path.clone());
+        self.sessions.push(session);
+        self.save_sessions();
+        // The app made this folder, so it is trusted when opened.
+        cx.emit(RepoEvent::WorktreeCreated(path.clone()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let run = cx.background_spawn({
+            let cancel = cancel.clone();
+            async move {
+                let mut last = String::new();
+                let ended = agent::run(&argv, &path, &cancel, |line| {
+                    if !line.trim().is_empty() {
+                        last = line.trim().to_owned();
+                    }
+                });
+                (ended, last, cancel.load(Ordering::Relaxed))
+            }
+        });
+        let name = branch.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let (ended, last, stopped) = run.await;
+            let _ = this.update(cx, |this, cx| {
+                this.agents.retain(|(branch, ..)| *branch != name);
+                let Some(session) = this.sessions.iter_mut().find(|s| s.branch == name) else {
+                    return;
+                };
+                (session.state, session.note) = match ended {
+                    _ if stopped => (SessionState::Stopped, last),
+                    Ok(true) => (SessionState::Done, last),
+                    Ok(false) => (SessionState::Failed, last),
+                    Err(problem) => (SessionState::Failed, problem),
+                };
+                let notice = match session.state {
+                    SessionState::Done => t!("agents.done", branch = &name),
+                    SessionState::Stopped => t!("agents.stopped", branch = &name),
+                    _ => t!("agents.failed", branch = &name),
+                };
+                this.save_sessions();
+                cx.emit(RepoEvent::Notice(notice.into_owned()));
+                cx.notify();
+            });
+        });
+        self.agents.push((branch, cancel, task));
+        cx.notify();
+    }
+
+    /// Stops a running agent. Its worktree and what it wrote stay.
+    pub fn stop_session(&mut self, branch: &str) {
+        if let Some((_, cancel, _)) = self.agents.iter().find(|(name, ..)| name == branch) {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Removes a session's worktree and drops it from the list. Git
+    /// refuses while the worktree has changes, so nothing is lost. A
+    /// session whose folder is already gone is only dropped.
+    pub fn remove_session(&mut self, branch: &str, cx: &mut Context<Self>) {
+        let Some(session) = self.sessions.iter().find(|s| s.branch == branch) else {
+            return;
+        };
+        if session.state == SessionState::Working {
+            return cx.emit(RepoEvent::Notice(t!("agents.stop_first").into_owned()));
+        }
+        if session.path.exists() {
+            self.run_op(Op::RemoveWorktree(session.path.clone()), cx);
+        } else {
+            self.sessions.retain(|s| s.branch != branch);
+            self.save_sessions();
+            cx.notify();
+        }
+    }
+
     /// Shows the blame or the history of the selected commit's selected
     /// file, as that commit has it.
     pub fn show_file(&mut self, mode: FileMode, cx: &mut Context<Self>) {
@@ -1457,6 +1615,8 @@ fn op_label(op: &Op) -> String {
         | Op::RenameRemote { .. }
         | Op::SetRemoteUrl { .. }
         | Op::RemoveRemote(_)
+        | Op::StartSession { .. }
+        | Op::RemoveWorktree(_)
         | Op::Redo
         | Op::RestoreSnapshot { .. } => String::new(),
     }
@@ -1789,6 +1949,12 @@ fn execute(
             remote::set_remote_url(runner, &name, &url).map(|()| Done::Changed)
         }
         Op::RemoveRemote(name) => remote::remove_remote(runner, &name).map(|()| Done::Changed),
+        Op::StartSession { path, branch } => {
+            worktree::add(runner, &path, &branch, "HEAD").map(|()| Done::SessionReady)
+        }
+        Op::RemoveWorktree(path) => {
+            worktree::remove(runner, &path).map(|()| Done::WorktreeRemoved(path))
+        }
         Op::Undo => {
             let entries = journal.entries();
             let Some(entry) = entries.iter().rev().find(|entry| !entry.undone) else {

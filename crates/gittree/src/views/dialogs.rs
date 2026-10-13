@@ -1233,3 +1233,119 @@ pub fn snapshots(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
             .ok_text(t!("snapshots.close").into_owned())
     });
 }
+
+use gittree_core::agent::{self, AgentKind};
+use gpui_kit::component::input::{Textarea, TextareaState};
+
+/// "Start an agent session": the agent, its task, and the branch and
+/// folder it gets (FR-AGENT-04).
+pub fn start_session(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
+    let kind = cx.new(|_| AgentKind::Claude);
+    let task = cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 8));
+    let custom = text_input("", "my-agent --flag".into(), window, cx);
+    let branch = text_input("", "agent/".into(), window, cx);
+    let folder = text_input("", String::new(), window, cx);
+    let at = match &repo.read(cx).repository.head {
+        gittree_core::model::Head::Branch(name) | gittree_core::model::Head::Unborn(name) => {
+            name.clone()
+        }
+        gittree_core::model::Head::Detached(oid) => oid.chars().take(7).collect(),
+    };
+    let root = repo.read(cx).repository.path.clone();
+    let body = (
+        kind.clone(),
+        task.clone(),
+        custom.clone(),
+        branch.clone(),
+        folder.clone(),
+    );
+    form(
+        t!("agents.start_title").into_owned(),
+        Some(t!("agents.start_text").into_owned()),
+        t!("agents.start").into_owned(),
+        None,
+        move |_, cx| {
+            let p = palette(cx);
+            let (kind, task, custom, branch, folder) = &body;
+            let picked = *kind.read(cx);
+            let chips = h_flex()
+                .gap(px(2.))
+                .children(AgentKind::ALL.into_iter().enumerate().map(|(ix, value)| {
+                    let on = picked == value;
+                    let handle = kind.clone();
+                    div()
+                        .id(("agent", ix))
+                        .h(px(26.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.))
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .cursor_pointer()
+                        .border_1()
+                        .border_color(if on { p.border_strong } else { p.border })
+                        .bg(if on { p.bg_elevated } else { p.bg_panel })
+                        .text_color(if on { p.text } else { p.text_secondary })
+                        .on_click(move |_, window, cx| {
+                            handle.update(cx, |kind, _| *kind = value);
+                            window.refresh();
+                        })
+                        .child(value.label())
+                }));
+            v_flex()
+                .gap(px(14.))
+                .child(field(t!("agents.agent").into_owned(), chips, None, p))
+                .when(picked == AgentKind::Other, |form| {
+                    form.child(field(
+                        t!("agents.command").into_owned(),
+                        Input::new(custom).id("agent-command").small(),
+                        Some(t!("agents.command_help").into_owned()),
+                        p,
+                    ))
+                })
+                .child(field(
+                    t!("agents.task").into_owned(),
+                    Textarea::new(task).small(),
+                    None,
+                    p,
+                ))
+                .child(field(
+                    t!("agents.branch").into_owned(),
+                    Input::new(branch).id("agent-branch").small(),
+                    Some(t!("agents.branch_help", at = &at).into_owned()),
+                    p,
+                ))
+                .child(field(
+                    t!("agents.folder").into_owned(),
+                    Input::new(folder).id("agent-folder").small(),
+                    Some(t!("agents.folder_help").into_owned()),
+                    p,
+                ))
+                .into_any_element()
+        },
+        move |_, cx| {
+            let text = task.read(cx).value().trim().to_owned();
+            if text.is_empty() {
+                return false;
+            }
+            let typed =
+                |input: &Entity<InputState>, cx: &App| input.read(cx).value().trim().to_owned();
+            let name = match typed(&branch, cx) {
+                name if name.is_empty() => agent::branch_for(&text),
+                name => name,
+            };
+            let path = match typed(&folder, cx) {
+                path if path.is_empty() => agent::folder_for(&root, &name),
+                path => path.into(),
+            };
+            let (kind, command) = (*kind.read(cx), typed(&custom, cx));
+            repo.update(cx, |repo, cx| {
+                repo.start_session(kind, &command, &text, name, path, cx)
+            });
+            true
+        },
+        window,
+        cx,
+    );
+}

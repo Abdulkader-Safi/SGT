@@ -14,6 +14,7 @@ use gpui_kit::{
 };
 use rust_i18n::t;
 
+use super::agents::AgentsView;
 use super::commit_detail::CommitDetail;
 use super::conflict::ConflictView;
 use super::dialogs;
@@ -40,6 +41,7 @@ pub struct Workspace {
     sidebar: Entity<Sidebar>,
     graph: Entity<GraphView>,
     detail: Entity<CommitDetail>,
+    agents: Entity<AgentsView>,
     file_view: Entity<FileViewPanel>,
     staging: Entity<StagingView>,
     conflict: Entity<ConflictView>,
@@ -115,6 +117,7 @@ impl Workspace {
             path: repo.read(cx).repository.path.clone(),
             sidebar: cx.new(|cx| Sidebar::new(repo.clone(), window, cx)),
             detail: cx.new(|cx| CommitDetail::new(repo.clone(), cx)),
+            agents: cx.new(|cx| AgentsView::new(repo.clone(), cx)),
             file_view: cx.new(|cx| FileViewPanel::new(repo.clone(), cx)),
             staging: cx.new(|cx| StagingView::new(app.clone(), repo.clone(), window, cx)),
             conflict: cx.new(|cx| ConflictView::new(repo.clone(), window, cx)),
@@ -447,6 +450,25 @@ impl Render for Workspace {
                     off(button)
                 }
             })
+            .child({
+                let working = repo
+                    .sessions
+                    .iter()
+                    .filter(|s| s.state == gittree_core::agent::SessionState::Working)
+                    .count();
+                tool(
+                    "agents",
+                    "merge",
+                    Some(t!("agents.toolbar").into_owned()),
+                    (working > 0).then(|| working.to_string()),
+                )
+                .when(repo.show_agents, |button| button.bg(p.bg_selected))
+                .cursor_pointer()
+                .hover(|style| style.bg(p.bg_hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.repo.update(cx, |repo, cx| repo.toggle_agents(cx))
+                }))
+            })
             .child(div().flex_1())
             .children(running)
             .when(repo.busy && !repo.net_running, |toolbar| {
@@ -555,6 +577,11 @@ impl Render for Workspace {
                 )
         });
 
+        let centre = if repo.show_agents {
+            self.agents.clone().into_any_element()
+        } else {
+            self.graph.clone().into_any_element()
+        };
         let right = if repo.resolving && repo.selection.wip {
             self.conflict.clone().into_any_element()
         } else if repo.selection.wip {
@@ -651,7 +678,7 @@ impl Render for Workspace {
                                 .flex_none()
                                 .child(self.sidebar.clone()),
                         )
-                        .child(resizable_panel().child(self.graph.clone()))
+                        .child(resizable_panel().child(centre))
                         .child(
                             resizable_panel()
                                 .visible(self.show_detail)

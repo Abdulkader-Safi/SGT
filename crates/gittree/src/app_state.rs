@@ -366,7 +366,11 @@ impl AppState {
         let runner = GitRunner::new(git, &repository.path, repository.trusted);
         let repo = cx.new(|cx| RepoState::new(repository, runner, cx));
         // A view shows these. AppState only passes them on.
-        cx.subscribe(&repo, |_, _, event: &RepoEvent, cx| match event {
+        cx.subscribe(&repo, |this, _, event: &RepoEvent, cx| match event {
+            RepoEvent::WorktreeCreated(path) => {
+                this.trust.insert(&setup::canonical(path));
+                this.save(&this.trust);
+            }
             RepoEvent::Error(error) => cx.emit(AppEvent::Error(error.clone())),
             RepoEvent::Notice(text) => cx.emit(AppEvent::Notice(text.clone())),
             RepoEvent::Credential(request) => cx.emit(AppEvent::Credential(request.clone())),

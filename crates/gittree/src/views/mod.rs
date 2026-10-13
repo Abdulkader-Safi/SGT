@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod commit_detail;
 pub mod conflict;
 pub mod dialogs;

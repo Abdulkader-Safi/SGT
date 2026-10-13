@@ -21,7 +21,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9 and M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
-| M12: blame, file history, worktrees, agent sessions | Blame and file history built, 146 tests pass. Worktrees and agent sessions not started |
+| M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 
 ## M0: de-risk
 
@@ -495,7 +495,31 @@ All three systems pass fmt, clippy and every test as of commit `Port step 4`. Ge
 - "Load all" on a cut diff does nothing useful in the history's diff pane.
 - The view has not been looked at on screen. The headless test renders it without error.
 
-### Not started
+### Worktrees and agent sessions (built)
 
-- Worktrees: list, add, remove.
-- Agent sessions in a new worktree on a new branch.
+- `ops::worktree` lists, adds and removes worktrees. Remove never forces, so a worktree with changed or untracked files stays.
+- `agent` holds the command line for each agent, the session list (saved in `.git/gittree/sessions.json`), and the process runner. Agents start with an argument vector, never a shell, and the task is always one argument.
+- "Agents" in the toolbar shows the sessions in place of the graph. "New session" asks for the agent, the task, a branch and a folder. The branch defaults to `agent/` plus the first words of the task, and the folder to `<repository>.worktrees/<name>` next to the repository.
+- A session card shows the agent, branch, state and the last line the agent printed. It has Stop while working, then Remove, "Review changes" and, on the branch it started from, "Merge into".
+- "Review changes" opens the worktree as a repository. The app made it, so it is trusted and its changes can be staged and committed there.
+- `an_agent_session_runs_in_its_own_worktree` runs a stand-in script as the agent.
+
+### What each agent is allowed
+
+- Claude Code: `claude --permission-mode acceptEdits -p <task>`.
+- Codex: `codex exec --sandbox workspace-write <task>`.
+- Gemini CLI: `gemini --approval-mode auto_edit -p <task>`.
+- Other: the typed command, split at spaces, with the task as the last argument.
+
+Each may edit files in its worktree without asking, and nothing wider. None can commit, so a finished session leaves uncommitted changes to review. The flags were read from each tool's `--help` on 2026-10-13 and have not been run with a real task.
+
+### Differences from the design
+
+- There is no "Needs you" state. An agent run this way cannot ask a question: it works or it ends.
+- The card does not show a count of changed files or lines.
+- The agent's output shows only when it ends, as one last line.
+- A session that was working when the app closed comes back as "Stopped". Its process is not found again.
+- "Review changes" replaces the open repository with the worktree. Going back is through the recent list, until tabs exist (M10).
+- Plain worktrees made outside the app are not listed. Only sessions are.
+- An app started from the Finder has a short `PATH`. The runner also looks in `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. An agent installed elsewhere (for example under nvm) needs "Other" with its full path.
+- The toolbar button reuses the merge icon.

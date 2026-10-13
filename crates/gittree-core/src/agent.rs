@@ -190,7 +190,7 @@ fn tempfile_dir() -> Result<PathBuf, String> {
 /// Finds a program the way a terminal would, then in the folders agents
 /// are usually installed to. An app started from the Finder gets a short
 /// `PATH` that leaves those out.
-fn find_program(name: &str) -> PathBuf {
+pub(crate) fn find_program(name: &str) -> PathBuf {
     if name.contains(std::path::MAIN_SEPARATOR) {
         return name.into();
     }

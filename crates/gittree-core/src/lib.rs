@@ -4,6 +4,7 @@ pub mod agent;
 pub mod askpass;
 pub mod error;
 pub mod graph;
+pub mod hosting;
 pub mod journal;
 pub mod mcp;
 pub mod model;

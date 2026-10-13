@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 use crate::error::{GitError, GitErrorKind};
 use crate::journal::{Action, Journal};
 use crate::model::{Head, RefKind, RepoPath};
-use crate::ops::{read, stage};
+use crate::ops::branch::{self, Target};
+use crate::ops::{read, stage, worktree};
 use crate::runner::GitRunner;
 use crate::store::McpAccess;
 
@@ -97,7 +98,127 @@ impl Server {
             "git_log_or_diff" if action == "diff" => self.diff(args),
             "git_log_or_diff" => self.log(args),
             "git_blame" => self.blame(args),
-            "git_branch" => self.branches(),
+            "git_branch" => match action {
+                "" | "list" => self.branches(),
+                "create" => {
+                    self.may_change()?;
+                    let (name, at) = (text("name"), or(text("at"), "HEAD"));
+                    let action = Action::CreateBranch {
+                        name: name.to_owned(),
+                        at: at.to_owned(),
+                        checkout: false,
+                    };
+                    self.journaled(
+                        action,
+                        format!("Create branch {name} (by an agent)"),
+                        || branch::create_branch(&self.runner, name, at, false),
+                    )?;
+                    Ok(format!("Created branch {name} at {at}."))
+                }
+                "delete" => {
+                    self.may_change()?;
+                    let name = text("name");
+                    // Never forced: Git refuses a branch with unmerged commits.
+                    let action = Action::DeleteBranch {
+                        name: name.to_owned(),
+                        force: false,
+                    };
+                    self.journaled(
+                        action,
+                        format!("Delete branch {name} (by an agent)"),
+                        || branch::delete_branch(&self.runner, name, false),
+                    )?;
+                    Ok(format!("Deleted branch {name}."))
+                }
+                _ => Err("git_branch takes action \"list\", \"create\" or \"delete\".".into()),
+            },
+            "git_checkout" => {
+                self.may_change()?;
+                let name = text("branch");
+                branch::check_name(&self.runner, name).map_err(told)?;
+                let action = Action::Checkout {
+                    target: name.to_owned(),
+                };
+                self.journaled(action, format!("Checkout {name} (by an agent)"), || {
+                    branch::checkout(&self.runner, &Target::Branch(name.to_owned()))
+                })?;
+                Ok(format!("Switched to {name}."))
+            }
+            "git_stash" => {
+                let index = args.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
+                match action {
+                    "" | "list" => {
+                        let stashes = branch::list_stashes(&self.runner).map_err(told)?;
+                        let lines: Vec<String> = stashes
+                            .iter()
+                            .map(|stash| format!("{} {}", stash.index, stash.message))
+                            .collect();
+                        Ok(if lines.is_empty() {
+                            "There are no stashes.".into()
+                        } else {
+                            lines.join("\n")
+                        })
+                    }
+                    "push" => {
+                        self.may_change()?;
+                        let message = or(text("message"), "Stashed by an agent");
+                        let action = Action::StashPush {
+                            message: message.to_owned(),
+                            include_untracked: true,
+                        };
+                        self.journaled(action, "Stash changes (by an agent)".into(), || {
+                            branch::stash_push(&self.runner, message, true)
+                        })?;
+                        Ok("Stashed the changes, untracked files included.".into())
+                    }
+                    "apply" | "pop" => {
+                        self.may_change()?;
+                        let run = if action == "pop" {
+                            branch::stash_pop
+                        } else {
+                            branch::stash_apply
+                        };
+                        run(&self.runner, index).map_err(told)?;
+                        Ok(format!("Stash {index}: {action} done."))
+                    }
+                    // Dropping a stash destroys work, so agents cannot.
+                    _ => Err(
+                        "git_stash takes action \"list\", \"push\", \"apply\" or \"pop\".".into(),
+                    ),
+                }
+            }
+            "git_worktree" => {
+                let path = Path::new(text("path"));
+                match action {
+                    "" | "list" => {
+                        let trees = worktree::list(&self.runner).map_err(told)?;
+                        let lines: Vec<String> = trees
+                            .iter()
+                            .map(|tree| {
+                                let branch = tree.branch.as_deref().unwrap_or("(detached)");
+                                format!("{} {branch}", tree.path.display())
+                            })
+                            .collect();
+                        Ok(lines.join("\n"))
+                    }
+                    "add" => {
+                        self.may_change()?;
+                        let (name, start) = (text("branch"), or(text("start"), "HEAD"));
+                        worktree::add(&self.runner, path, name, start).map_err(told)?;
+                        Ok(format!(
+                            "Added a worktree at {} on new branch {name}.",
+                            path.display()
+                        ))
+                    }
+                    "remove" => {
+                        self.may_change()?;
+                        // Never forced: Git refuses a worktree with changes.
+                        worktree::remove(&self.runner, path).map_err(told)?;
+                        Ok(format!("Removed the worktree at {}.", path.display()))
+                    }
+                    _ => Err("git_worktree takes action \"list\", \"add\" or \"remove\".".into()),
+                }
+            }
             "git_add_or_commit" => {
                 self.may_change()?;
                 if action == "commit" {
@@ -123,6 +244,30 @@ impl Server {
                 .into());
         }
         Ok(())
+    }
+
+    /// Runs a change with a journal entry, so the app can undo it.
+    fn journaled(
+        &self,
+        action: Action,
+        label: String,
+        run: impl FnOnce() -> Result<(), GitError>,
+    ) -> Result<(), Refusal> {
+        let pending = self
+            .journal
+            .begin(&self.runner, action, label)
+            .map_err(told)?;
+        match run() {
+            Ok(()) => self
+                .journal
+                .finish(&self.runner, pending)
+                .map(drop)
+                .map_err(told),
+            Err(error) => {
+                self.journal.abandon(&self.runner, pending);
+                Err(told(error))
+            }
+        }
     }
 
     fn status(&self) -> Result<String, Refusal> {
@@ -310,6 +455,11 @@ fn path_args(args: &Value) -> Vec<String> {
     }
 }
 
+/// `value`, or `fallback` when it is empty.
+fn or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.is_empty() { fallback } else { value }
+}
+
 fn told(error: GitError) -> Refusal {
     match error.kind {
         GitErrorKind::Untrusted => "This repository is not trusted, so it is read-only.".into(),
@@ -362,8 +512,56 @@ fn tools() -> Value {
         },
         {
             "name": "git_branch",
-            "description": "Local and remote branches, with the current one marked.",
-            "inputSchema": { "type": "object", "properties": {} },
+            "description": "With action \"list\" (the default): local and remote branches, \
+                the current one marked. \"create\" makes a branch without switching to it. \
+                \"delete\" removes one whose commits are merged. Both can be undone in the app.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "create", "delete"] },
+                    "name": text("For create and delete: the branch."),
+                    "at": text("For create: where it starts. Default HEAD."),
+                },
+            },
+        },
+        {
+            "name": "git_checkout",
+            "description": "Switches to a local branch. Git refuses when local changes would \
+                be overwritten: stash them first. Can be undone in the app.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "branch": text("The local branch to switch to.") },
+                "required": ["branch"],
+            },
+        },
+        {
+            "name": "git_stash",
+            "description": "With action \"list\" (the default): the stashes. \"push\" stashes \
+                all changes, untracked files included. \"apply\" and \"pop\" bring one back. \
+                Stashes cannot be dropped here.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "push", "apply", "pop"] },
+                    "message": text("For push."),
+                    "index": { "type": "integer", "description": "For apply and pop. Default 0, the newest." },
+                },
+            },
+        },
+        {
+            "name": "git_worktree",
+            "description": "With action \"list\" (the default): the worktrees. \"add\" makes \
+                one at a full path on a new branch. \"remove\" removes one that has no \
+                changed or untracked files.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "action": { "type": "string", "enum": ["list", "add", "remove"] },
+                    "path": text("For add and remove: the folder, as a full path."),
+                    "branch": text("For add: the new branch."),
+                    "start": text("For add: where the branch starts. Default HEAD."),
+                },
+            },
         },
         {
             "name": "git_add_or_commit",

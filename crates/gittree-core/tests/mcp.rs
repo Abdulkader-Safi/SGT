@@ -73,6 +73,9 @@ fn speaks_the_protocol() {
             "git_log_or_diff",
             "git_blame",
             "git_branch",
+            "git_checkout",
+            "git_stash",
+            "git_worktree",
             "git_add_or_commit"
         ]
     );
@@ -179,4 +182,92 @@ fn changes_need_trust_and_the_access_setting() {
         repo.git(1, &["status", "--porcelain"]),
         "M  a.txt\n?? new.txt"
     );
+}
+
+#[test]
+fn branches_checkout_stash_and_worktrees_are_journaled_and_never_forced() {
+    let repo = repo_with_changes();
+    let journal = Journal::new(&repo.path().join(".git"));
+    let server = server(&repo, true, McpAccess::ReadWrite);
+    let ok = |name: &str, arguments: Value| {
+        let (text, failed) = call(&server, name, arguments);
+        assert!(!failed, "{name}: {text}");
+        text
+    };
+    let refused = |name: &str, arguments: Value| {
+        let (text, failed) = call(&server, name, arguments);
+        assert!(failed, "{name} should be refused: {text}");
+        text
+    };
+
+    // The changes are stashed, untracked file included, then brought back.
+    ok("git_stash", json!({ "action": "push", "message": "wip" }));
+    assert_eq!(repo.git(1, &["status", "--porcelain"]), "");
+    assert!(ok("git_stash", json!({})).contains("wip"));
+    refused("git_stash", json!({ "action": "drop" }));
+
+    ok("git_branch", json!({ "action": "create", "name": "topic" }));
+    ok("git_checkout", json!({ "branch": "topic" }));
+    assert_eq!(
+        repo.git(1, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "topic"
+    );
+    refused("git_checkout", json!({ "branch": "--detach" }));
+    refused("git_branch", json!({ "action": "create", "name": "-x" }));
+
+    // A branch with commits of its own is not deleted.
+    repo.write("b.txt", b"b\n");
+    repo.commit_all("on topic");
+    ok("git_checkout", json!({ "branch": "main" }));
+    refused("git_branch", json!({ "action": "delete", "name": "topic" }));
+    assert!(ok("git_branch", json!({ "action": "list" })).contains("topic"));
+
+    ok("git_stash", json!({ "action": "pop" }));
+    assert!(repo.git(1, &["status", "--porcelain"]).contains("new.txt"));
+
+    // Each change the app can undo has a journal entry.
+    let labels: Vec<String> = journal.entries().iter().map(|e| e.label.clone()).collect();
+    assert_eq!(
+        labels,
+        [
+            "Stash changes (by an agent)",
+            "Create branch topic (by an agent)",
+            "Checkout topic (by an agent)",
+            "Checkout main (by an agent)",
+        ]
+    );
+
+    let outside = tempfile::tempdir().unwrap();
+    let path = gittree_core::ops::setup::canonical(outside.path()).join("wt");
+    let path_text = path.to_str().unwrap();
+    ok(
+        "git_worktree",
+        json!({ "action": "add", "path": path_text, "branch": "agent/x" }),
+    );
+    assert!(ok("git_worktree", json!({})).contains("agent/x"));
+    std::fs::write(path.join("work.txt"), "work").unwrap();
+    refused(
+        "git_worktree",
+        json!({ "action": "remove", "path": path_text }),
+    );
+    assert!(path.join("work.txt").exists());
+    refused(
+        "git_worktree",
+        json!({ "action": "add", "path": "relative", "branch": "y" }),
+    );
+
+    // Read only: listing works, every change is refused.
+    let reader = self::server(&repo, true, McpAccess::ReadOnly);
+    for (name, arguments) in [
+        ("git_branch", json!({ "action": "create", "name": "no" })),
+        ("git_checkout", json!({ "branch": "topic" })),
+        ("git_stash", json!({ "action": "push" })),
+        (
+            "git_worktree",
+            json!({ "action": "remove", "path": path_text }),
+        ),
+    ] {
+        assert!(call(&reader, name, arguments).1, "{name} must be refused");
+    }
+    assert!(!call(&reader, "git_stash", json!({})).1);
 }

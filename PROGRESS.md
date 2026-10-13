@@ -302,9 +302,15 @@ To connect Claude Code: `claude mcp add sgt -- /path/to/gittree mcp`, run in the
 
 Checked by tests: the protocol (initialize, notifications, unknown methods, one line in and one line out), every read tool in an untrusted repository, the two refusals for changes, an agent commit and its undo, and option injection through `revision` and `path`. Also tried by hand over a pipe against the built binary.
 
+### Step 2 (built): the remaining tools
+
+- `git_branch` also creates a branch and deletes a merged one. `git_checkout` switches to a local branch. `git_stash` lists, pushes, applies and pops. `git_worktree` lists, adds and removes.
+- Branch create and delete, checkout and stash push each write a journal entry labelled "(by an agent)", so the app can undo them.
+- Nothing is forced: a branch with unmerged commits and a worktree with changes are refused by Git, and stashes cannot be dropped through the server.
+- Every changing action needs a trusted repository and access set to read and change. Listing works read-only.
+
 ### Still to do
 
-- `git_checkout`, `git_stash`, `git_worktree` and branch create and delete, once M4 has those operations.
 - The MCP page in Settings from the design (per-tool switches, the copy-ready client command).
 - The agent activity panel and the approval banner. Both need the server and a running app to talk to each other, which they do not yet: today the server is its own process.
 

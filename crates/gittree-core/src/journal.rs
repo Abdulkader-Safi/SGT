@@ -68,6 +68,25 @@ pub enum Action {
         oid: Oid,
         message: String,
     },
+    Merge {
+        branch: String,
+        no_ff: bool,
+    },
+    Rebase {
+        onto: String,
+    },
+    CherryPick {
+        oid: String,
+        mainline: Option<u32>,
+    },
+    Revert {
+        oid: String,
+        mainline: Option<u32>,
+    },
+    Reset {
+        target: String,
+        mode: crate::ops::merge::ResetMode,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,6 +266,11 @@ impl Journal {
                 vec![format!("refs/tags/{name}")]
             }
             Action::StashPush { .. } | Action::StashDrop { .. } => vec!["refs/stash".into()],
+            Action::Merge { .. }
+            | Action::Rebase { .. }
+            | Action::CherryPick { .. }
+            | Action::Revert { .. }
+            | Action::Reset { .. } => head_before.symbolic.iter().cloned().collect(),
         };
         let refs_before = touched
             .into_iter()
@@ -266,7 +290,25 @@ impl Journal {
             | Action::CreateTag { .. }
             | Action::DeleteTag { .. }
             | Action::StashPush { .. }
-            | Action::StashDrop { .. } => None,
+            | Action::StashDrop { .. }
+            | Action::Merge { .. }
+            | Action::CherryPick { .. }
+            | Action::Revert { .. } => None,
+            // Both can throw away or rewrite work, so the index and the
+            // tracked changes are saved first.
+            Action::Rebase { .. } | Action::Reset { .. } => {
+                let stash = text(runner.write(["stash", "create"])?);
+                if stash.is_empty() {
+                    None
+                } else {
+                    let name = format!("refs/gittree/snapshots/{id}");
+                    runner.write(["update-ref", &name, &stash])?;
+                    Some(Snapshot {
+                        tree_ref: Some(name),
+                        ..Default::default()
+                    })
+                }
+            }
             Action::DiscardLines { patch, .. } => {
                 std::fs::create_dir_all(&backup).map_err(io_error)?;
                 std::fs::write(backup.join("discard.patch"), patch).map_err(io_error)?;
@@ -344,6 +386,25 @@ impl Journal {
             .and_then(|mut file| file.write_all(&line))
             .map_err(io_error)?;
         Ok(entry)
+    }
+
+    fn parked_file(&self) -> PathBuf {
+        self.dir.join("in-progress.json")
+    }
+
+    /// Keeps the entry of an action that stopped on a conflict. It is
+    /// finished when the operation is continued to its end.
+    pub fn park(&self, pending: PendingEntry) -> Result<(), GitError> {
+        std::fs::create_dir_all(&self.dir).map_err(io_error)?;
+        let json = serde_json::to_vec(&pending.0).map_err(|e| io_error(e.into()))?;
+        std::fs::write(self.parked_file(), json).map_err(io_error)
+    }
+
+    /// The parked entry, if there is one. It is removed from disk.
+    pub fn take_parked(&self) -> Option<PendingEntry> {
+        let json = std::fs::read(self.parked_file()).ok()?;
+        let _ = std::fs::remove_file(self.parked_file());
+        serde_json::from_slice(&json).ok().map(PendingEntry)
     }
 
     /// Drops the snapshot of an action that failed.
@@ -435,6 +496,20 @@ impl Journal {
             Action::StashDrop { oid, message } => runner
                 .write(["stash", "store", "-m", message, oid])
                 .map(drop)?,
+            Action::Merge { .. }
+            | Action::Rebase { .. }
+            | Action::CherryPick { .. }
+            | Action::Revert { .. }
+            | Action::Reset { .. } => {
+                if let Some(oid) = &entry.head_before.oid {
+                    runner.write(["reset", "-q", "--hard", oid]).map(drop)?;
+                }
+                if let Some(tree) = &snapshot.tree_ref {
+                    runner
+                        .write(["stash", "apply", "-q", "--index", tree])
+                        .map(drop)?;
+                }
+            }
         }
         self.mark_undone(entry)
     }

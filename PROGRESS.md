@@ -411,3 +411,26 @@ Undo then redo for commit, branch create (with checkout), checkout, rename, dele
 - "Restore to new branch" names the branch `snapshot-<id>` itself. It does not ask for a name.
 - The palette opens with all commands listed. It does not keep a list of recent commands.
 - A force-push cannot be undone, since it changed the remote. Its old commit is in the snapshot list.
+
+## Scope change: Windows and Linux (2026-10-13)
+
+The owner asked for the app to run on Windows and Linux, checked in CI. They were planned for v1.1. Spec files 01 to 06, the README and `CLAUDE.md` now name all three systems. Installers for Windows and Linux stay out of v1.
+
+### What changed
+
+- CI runs fmt, clippy and the tests on `macos-latest`, `ubuntu-latest` and `windows-latest`. The core crate's tests run first, because they finish in seconds.
+- The core crate compiles for Windows. Git paths go through `model::os_str`, which takes raw bytes on Unix and UTF-8 on Windows.
+- Askpass on Windows listens on a TCP port on 127.0.0.1, because the standard library has no Unix sockets there. The one-time token is the only guard on that port. It now comes from `getrandom` on every system.
+- Cancelling a network command on Windows runs `taskkill /T /F` on the process tree. There is no polite first step as there is with SIGTERM.
+- Shortcuts are bound with `secondary-`, which is Cmd on macOS and Ctrl elsewhere. Hints such as "⇧⌘O" are shown as "Ctrl+Shift+O" off macOS.
+- Windows and Linux keep the system title bar. The toolbar under the traffic lights is macOS only.
+
+### Known gaps on Windows and Linux
+
+- No menu bar. The commands are in the palette and on their shortcuts.
+- A path that is not UTF-8 cannot be named on Windows.
+- Restoring a discarded symbolic link on Windows needs developer mode, and a link to a folder comes back as a file link.
+- An untracked file never shows as executable on Windows.
+- The Git install hint on Linux is the `apt` command only.
+- The bench does not report peak memory on Windows.
+- Nobody has run the app in a window on either system. CI only builds it and runs the tests.

@@ -10,12 +10,26 @@ env:
 
 jobs:
   check:
-    runs-on: macos-latest
+    strategy:
+      # One system failing must not hide the result on the others.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
+      # Tests compare file contents, so Windows must not rewrite line ends.
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@v5
+      # What GPUI links against on Linux.
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libxkbcommon-dev libssl-dev libzstd-dev libvulkan1 clang
       # The toolchain comes from rust-toolchain.toml on the first cargo call.
       - uses: Swatinem/rust-cache@v2
       - run: git --version
       - run: cargo fmt --check
+      # The core crate first: it builds in seconds and holds the Git logic.
+      - run: cargo test -p gittree-core
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace

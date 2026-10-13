@@ -238,8 +238,6 @@ impl GitRunner {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        use std::os::unix::process::CommandExt;
-
         let args: Vec<OsString> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
         let shown: Vec<String> = args.iter().map(|a| redact(&a.to_string_lossy())).collect();
         let error = |kind, exit_code, stderr: String| GitError {
@@ -262,14 +260,15 @@ impl GitRunner {
             .envs(env.iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Its own group, so cancelling also reaches ssh and helpers.
-            .process_group(0);
+            .stderr(Stdio::piped());
+        // Its own group, so cancelling also reaches ssh and helpers.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
         let started = Instant::now();
         let mut child = command
             .spawn()
             .map_err(|e| error(GitErrorKind::GitNotFound, None, e.to_string()))?;
-        let pid = child.id() as libc::pid_t;
+        let pid = child.id();
         let mut stdout = child.stdout.take().expect("stdout is piped");
         let mut stderr = child.stderr.take().expect("stderr is piped");
         let done = AtomicBool::new(false);
@@ -285,12 +284,11 @@ impl GitRunner {
                     if cancel.load(Ordering::Relaxed) {
                         match asked_at {
                             None => {
-                                // SAFETY: signals a process group this call made.
-                                unsafe { libc::killpg(pid, libc::SIGTERM) };
+                                stop_group(pid, false);
                                 asked_at = Some(Instant::now());
                             }
                             Some(at) if at.elapsed() > Duration::from_secs(2) => {
-                                unsafe { libc::killpg(pid, libc::SIGKILL) };
+                                stop_group(pid, true);
                                 break;
                             }
                             Some(_) => {}
@@ -480,6 +478,26 @@ fn redact(arg: &str) -> String {
         &arg[..authority_start + colon + 1],
         &arg[authority_start + at..]
     )
+}
+
+/// Stops a network command and everything it started. The first call asks,
+/// the second (`force`) does not.
+#[cfg(unix)]
+fn stop_group(pid: u32, force: bool) {
+    let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+    // SAFETY: signals a process group `run_network` made.
+    unsafe { libc::killpg(pid as libc::pid_t, signal) };
+}
+
+// ponytail: Windows has no polite signal for a process tree, so both calls
+// end it at once.
+#[cfg(windows)]
+fn stop_group(pid: u32, _force: bool) {
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 #[cfg(test)]

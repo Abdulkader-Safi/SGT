@@ -89,9 +89,26 @@ pub struct ActivityRecord {
 pub struct RepoPath(pub Vec<u8>);
 
 impl RepoPath {
-    pub fn as_os_str(&self) -> &std::ffi::OsStr {
-        std::os::unix::ffi::OsStrExt::from_bytes(&self.0)
+    pub fn as_os_str(&self) -> std::borrow::Cow<'_, std::ffi::OsStr> {
+        os_str(&self.0)
     }
+}
+
+/// Bytes Git printed, as a string for the operating system. Unix takes any
+/// bytes. On Windows Git prints UTF-8.
+pub fn os_str(bytes: &[u8]) -> std::borrow::Cow<'_, std::ffi::OsStr> {
+    #[cfg(unix)]
+    return std::borrow::Cow::Borrowed(std::os::unix::ffi::OsStrExt::from_bytes(bytes));
+    #[cfg(not(unix))]
+    return std::borrow::Cow::Owned(String::from_utf8_lossy(bytes).into_owned().into());
+}
+
+/// The other way round, for a path read from disk.
+pub fn os_bytes(text: &std::ffi::OsStr) -> Vec<u8> {
+    #[cfg(unix)]
+    return std::os::unix::ffi::OsStrExt::as_bytes(text).to_vec();
+    #[cfg(not(unix))]
+    return text.to_string_lossy().into_owned().into_bytes();
 }
 
 impl std::fmt::Display for RepoPath {

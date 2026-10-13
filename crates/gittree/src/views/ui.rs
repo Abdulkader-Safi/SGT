@@ -54,7 +54,7 @@ pub fn kbd(text: impl Into<SharedString>, p: Palette) -> Div {
         .border_color(p.border_strong)
         .text_size(px(11.))
         .text_color(p.text_secondary)
-        .child(text.into())
+        .child(crate::platform::shortcut(&text.into()))
 }
 
 /// What a graph label names. Each kind has its own colours and icon.

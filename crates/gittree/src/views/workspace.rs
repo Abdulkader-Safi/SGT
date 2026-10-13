@@ -266,7 +266,7 @@ impl Render for Workspace {
             .h(px(48.))
             .flex_none()
             // Room for the traffic lights.
-            .pl(px(84.))
+            .pl(px(if crate::platform::MAC { 84. } else { 12. }))
             .pr_3()
             .gap(px(6.))
             .bg(p.bg_panel)

@@ -32,6 +32,8 @@ fn a_program_that_is_not_git_is_reported_as_not_found() {
     assert_eq!(error.kind, GitErrorKind::GitNotFound);
 }
 
+// A shell script can stand in for Git only where scripts are executable.
+#[cfg(unix)]
 #[test]
 fn an_old_git_is_reported_with_its_version() {
     isolate_git();
@@ -44,6 +46,7 @@ fn an_old_git_is_reported_with_its_version() {
     assert_eq!(error.stderr, "git version 2.30.1");
 }
 
+#[cfg(unix)]
 fn make_executable(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();

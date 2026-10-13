@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsStr;
 
 use crate::error::GitError;
@@ -16,9 +17,9 @@ pub enum Target {
     Discard,
 }
 
-fn with_paths<'a>(args: &[&'a str], paths: &'a [RepoPath]) -> Vec<&'a OsStr> {
-    let mut all: Vec<&OsStr> = args.iter().map(|&arg| OsStr::new(arg)).collect();
-    all.push("--".as_ref());
+fn with_paths<'a>(args: &[&'a str], paths: &'a [RepoPath]) -> Vec<Cow<'a, OsStr>> {
+    let mut all: Vec<_> = args.iter().map(|&arg| OsStr::new(arg).into()).collect();
+    all.push(OsStr::new("--").into());
     all.extend(paths.iter().map(RepoPath::as_os_str));
     all
 }

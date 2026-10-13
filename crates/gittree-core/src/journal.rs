@@ -770,7 +770,13 @@ fn copy_file(from: &Path, to: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     if std::fs::symlink_metadata(from)?.is_symlink() {
-        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)
+        let target = std::fs::read_link(from)?;
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, to);
+        // ponytail: a link to a folder is recreated as a file link, and
+        // Windows refuses both without developer mode.
+        #[cfg(windows)]
+        return std::os::windows::fs::symlink_file(target, to);
     } else {
         std::fs::copy(from, to).map(drop)
     }

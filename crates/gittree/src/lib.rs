@@ -42,10 +42,10 @@ pub fn window_options(saved: Option<WindowState>, cx: &App) -> WindowOptions {
         window_min_size: Some(size(px(900.), px(600.))),
         titlebar: Some(TitlebarOptions {
             title: Some(APP_NAME.into()),
-            // The toolbar draws under the title bar, next to the traffic
-            // lights, as one strip.
-            appears_transparent: true,
-            traffic_light_position: Some(point(px(16.), px(17.))),
+            // On macOS the toolbar draws under the title bar, next to the
+            // traffic lights, as one strip.
+            appears_transparent: platform::MAC,
+            traffic_light_position: platform::MAC.then(|| point(px(16.), px(17.))),
         }),
         ..Default::default()
     }

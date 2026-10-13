@@ -56,9 +56,9 @@ Free. Source published on GitHub at https://github.com/Abdulkader-Safi/SGT under
 
 ## Platforms
 
-Day one: macOS 13 or later, Apple silicon and Intel. That is where it is built and used daily.
+Day one: macOS 13 or later (Apple silicon and Intel), Windows 10/11 and Linux (Ubuntu 22.04+, Debian 12+). It is built and used daily on macOS, and CI builds and tests all three.
 
-Later (v1.1): Windows 10/11 and Linux (Ubuntu 22.04+, Debian 12+). GPUI supports both, and v1 code keeps platform-specific parts in one module so the port is packaging work, not a rewrite.
+GPUI supports all three, and code that differs between them stays in one module. Installers for Windows and Linux come after v1: until then the app is built from source there.
 
 ## What success looks like
 
@@ -95,6 +95,6 @@ All items below are defaults taken under Safi's blanket sign-off on 2026-10-12. 
 
 1. **Business model : RESOLVED.** Free and source-available under Apache-2.0, no revenue goal for v1.
 2. **Scope : RESOLVED.** v1 is the local Git client only. Hosting integrations, the AI assistant, the built-in terminal and user accounts are v2 or later. Reason: each needs either a backend or a large separate subsystem, and none is needed to replace a Git client for daily use.
-3. **Platform : RESOLVED.** macOS only for v1, Windows and Linux in v1.1.
+3. **Platform : RESOLVED.** macOS, Windows and Linux in v1 (changed on 2026-10-13: Windows and Linux were v1.1). Installers for Windows and Linux stay after v1.
 4. **Language : RESOLVED.** English only for v1. Arabic and right-to-left layout are deferred because GPUI Kit's own docs say right-to-left is not automatic and has to be reviewed per screen. All strings still go through the i18n layer so Arabic can be added without touching views.
 5. **Name : RESOLVED 2026-10-13.** The product is "Safi Git Tree", short form SGT. It replaces the working name "GitTree", which another commercial Git client already uses. Internal identifiers keep the old spelling: the crates `gittree` and `gittree-core`, the `GITTREE_*` environment variables, `refs/gittree/` and the `.git/gittree/` folder.

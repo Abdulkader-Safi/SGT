@@ -2,13 +2,29 @@
 
 mod common;
 
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use common::TestRepo;
 use gittree_core::GitErrorKind;
 use gittree_core::ops::setup::open;
 use gittree_core::store::TrustList;
+
+/// Git runs these scripts through a shell, which wants forward slashes
+/// on Windows too.
+fn sh_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+/// Windows has no executable bit: Git there runs any hook file.
+fn make_executable(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
 
 /// A repository whose hooks and fsmonitor command each leave a marker file
 /// when Git runs them.
@@ -28,12 +44,12 @@ impl Planted {
         let script = |name: &str| {
             format!(
                 "#!/bin/sh\ntouch '{}'\n",
-                markers.path().join(name).display()
+                sh_path(&markers.path().join(name))
             )
         };
         let write_script = |path: PathBuf, name: &str| {
             std::fs::write(&path, script(name)).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            make_executable(&path);
         };
         let hooks = repo.path().join(".git/hooks");
         std::fs::create_dir_all(&hooks).unwrap();
@@ -42,10 +58,7 @@ impl Planted {
         }
         let fsmonitor = repo.path().join(".git/fsmonitor.sh");
         write_script(fsmonitor.clone(), "fsmonitor");
-        repo.git(
-            0,
-            &["config", "core.fsmonitor", fsmonitor.to_str().unwrap()],
-        );
+        repo.git(0, &["config", "core.fsmonitor", &sh_path(&fsmonitor)]);
 
         // A filter and a textconv driver, named by .gitattributes and defined
         // in the repository's own config.
@@ -54,37 +67,24 @@ impl Planted {
             &filter,
             format!(
                 "#!/bin/sh\ntouch '{}'\ncat\n",
-                markers.path().join("filter").display()
+                sh_path(&markers.path().join("filter"))
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&filter, std::fs::Permissions::from_mode(0o755)).unwrap();
+        make_executable(&filter);
         let textconv = repo.path().join(".git/textconv.sh");
         std::fs::write(
             &textconv,
             format!(
                 "#!/bin/sh\ntouch '{}'\ncat \"$1\"\n",
-                markers.path().join("textconv").display()
+                sh_path(&markers.path().join("textconv"))
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&textconv, std::fs::Permissions::from_mode(0o755)).unwrap();
-        repo.git(
-            0,
-            &["config", "filter.planted.clean", filter.to_str().unwrap()],
-        );
-        repo.git(
-            0,
-            &["config", "filter.planted.smudge", filter.to_str().unwrap()],
-        );
-        repo.git(
-            0,
-            &[
-                "config",
-                "diff.planted.textconv",
-                textconv.to_str().unwrap(),
-            ],
-        );
+        make_executable(&textconv);
+        repo.git(0, &["config", "filter.planted.clean", &sh_path(&filter)]);
+        repo.git(0, &["config", "filter.planted.smudge", &sh_path(&filter)]);
+        repo.git(0, &["config", "diff.planted.textconv", &sh_path(&textconv)]);
         std::fs::write(
             repo.path().join(".git/info/attributes"),
             "* filter=planted diff=planted\n",

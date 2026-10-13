@@ -153,14 +153,23 @@ fn summarise(label: &str, times: &[Duration]) {
     }
 }
 
-/// The largest resident size the process reached. macOS reports bytes.
+/// The largest resident size the process reached. macOS reports bytes
+/// and Linux kilobytes.
+#[cfg(unix)]
 fn peak_memory_bytes() -> u64 {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
     // SAFETY: getrusage fills the struct it is given.
-    unsafe {
+    let peak = unsafe {
         libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr());
         usage.assume_init().ru_maxrss as u64
-    }
+    };
+    peak * if cfg!(target_os = "macos") { 1 } else { 1024 }
+}
+
+// ponytail: not measured on Windows. Read it from Task Manager.
+#[cfg(not(unix))]
+fn peak_memory_bytes() -> u64 {
+    0
 }
 
 fn main() {

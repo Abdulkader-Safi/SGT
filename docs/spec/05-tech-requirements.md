@@ -2,7 +2,7 @@
 
 Status: signed off 2026-10-12
 
-The engineering blueprint. Tech context: Rust 1.97.1, GPUI through `gpui-kit` 0.7.3, system Git 2.39+ as the only Git backend, JSON files for app data, macOS 13+.
+The engineering blueprint. Tech context: Rust 1.97.1, GPUI through `gpui-kit` 0.7.3, system Git 2.39+ as the only Git backend, JSON files for app data, macOS 13+, Windows 10/11 and Linux.
 
 ## Architecture
 

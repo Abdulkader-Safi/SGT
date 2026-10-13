@@ -30,11 +30,11 @@ fn serve_mcp(folder: Option<std::ffi::OsString>) -> Result<(), String> {
 
 /// Askpass helper mode: Git or ssh started this binary to ask a question.
 /// It is passed on to the running app, and the answer goes to stdout.
-fn askpass(sock: std::ffi::OsString) -> ! {
+fn askpass(sock: String) -> ! {
     use gittree_core::askpass;
     let token = std::env::var(askpass::TOKEN_VAR).unwrap_or_default();
     let question = std::env::args().nth(1).unwrap_or_default();
-    match askpass::ask(std::path::Path::new(&sock), &token, &question) {
+    match askpass::ask(&sock, &token, &question) {
         Some(answer) => {
             println!("{answer}");
             std::process::exit(0)
@@ -44,7 +44,7 @@ fn askpass(sock: std::ffi::OsString) -> ! {
 }
 
 fn main() {
-    if let Some(sock) = std::env::var_os(gittree_core::askpass::SOCK_VAR) {
+    if let Ok(sock) = std::env::var(gittree_core::askpass::SOCK_VAR) {
         askpass(sock);
     }
     logging::init();

@@ -26,7 +26,11 @@ impl GitCheckView {
         let current = app.read(cx).settings.git_path.clone();
         let path = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("/usr/bin/git")
+                .placeholder(if cfg!(windows) {
+                    r"C:\Program Files\Git\cmd\git.exe"
+                } else {
+                    "/usr/bin/git"
+                })
                 .default_value(current.map(|p| p.display().to_string()).unwrap_or_default())
         });
         cx.subscribe(&path, |this, _, event: &InputEvent, cx| {
@@ -170,7 +174,7 @@ impl Render for GitCheckView {
                                     .text_color(p.text_tertiary)
                                     .child(t!("git_check.install_with").into_owned()),
                             )
-                            .child(kbd("xcode-select --install", p).font_family(mono.clone()))
+                            .child(kbd(crate::platform::GIT_INSTALL, p).font_family(mono.clone()))
                             .child(div().flex_1())
                             .child(
                                 Button::new("retry")

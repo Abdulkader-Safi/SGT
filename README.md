@@ -1,6 +1,6 @@
 # Safi Git Tree (SGT)
 
-A native Git client for macOS, written in Rust and drawn with GPUI. It shows the commit graph, branches, commit details and diffs. Every Git action is done by the `git` already installed on your Mac, so the app always agrees with the command line.
+A native Git client for macOS, Windows and Linux, written in Rust and drawn with GPUI. It shows the commit graph, branches, commit details and diffs. Every Git action is done by the `git` already installed on your machine, so the app always agrees with the command line.
 
 There is no account, no server and no telemetry. The only network use is Git's own.
 
@@ -30,10 +30,11 @@ Not built yet: packaging as an app bundle, blame and file history, worktrees and
 
 ## Requirements
 
-- macOS 13 or later
+- macOS 13 or later, Windows 10/11, or Linux (Ubuntu 22.04+, Debian 12+)
 - Git 2.39 or later
 - Rust 1.97.1 to build (pinned in `rust-toolchain.toml`, so `rustup` installs it for you)
-- Xcode command line tools
+- macOS: Xcode command line tools
+- Linux: the libraries GPUI links against (the `apt-get install` line in `.github/workflows/ci.yml` lists them)
 
 ## Build and run
 

@@ -12,7 +12,7 @@ The product is named Safi Git Tree (SGT). Internal identifiers (`gittree` crates
 
 ## What this is
 
-Safi Git Tree (SGT) is a native macOS Git client in Rust, rendered with GPUI through the `gpui-kit` crate. v1 is a local client only: no backend, accounts, telemetry, hosting integrations, AI features or terminal. Section 11 of the build spec lists what not to build.
+Safi Git Tree (SGT) is a native Git client for macOS, Windows and Linux in Rust, rendered with GPUI through the `gpui-kit` crate. v1 is a local client only: no backend, accounts, telemetry, hosting integrations, AI features or terminal. Section 11 of the build spec lists what not to build.
 
 ## Commands
 
@@ -50,6 +50,7 @@ All Git work is done by the installed `git` executable (2.39+) as a child proces
 - Never write global Git config, `~/.ssh` or a credential store. Never store or log a secret. No network use besides Git's own.
 - Import GPUI only through `gpui_kit` re-exports. Never add the `gpui` crate directly: the kit pins its own GPUI snapshot (`gpui-pre`) and a second copy will not compile together with it.
 - GPUI Kit is pinned at 0.7.3 and its API changes often. Read the docs for that exact version on docs.rs before using a component. Upgrade only as a separate commit.
+- The app runs on macOS, Windows and Linux, and CI checks all three. Keep what differs behind `cfg`: in `crates/gittree/src/platform` for the app, and in place for the few core functions that touch processes, sockets and file modes. Bind shortcuts with `secondary-` (Cmd on macOS, Ctrl elsewhere), not `cmd-`.
 - `git log --all` must be preceded by `--exclude=refs/gittree/*`, because the app keeps snapshot refs under `refs/gittree/snapshots/`.
 
 ## Working conventions

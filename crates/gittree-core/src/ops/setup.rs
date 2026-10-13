@@ -1,5 +1,3 @@
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::error::{GitError, GitErrorKind};
@@ -66,7 +64,7 @@ pub fn open(git: &Path, path: &Path, trust: &TrustList) -> Result<Repository, Gi
         "--show-object-format",
     ])?;
     let mut lines = out.split(|&b| b == b'\n');
-    let mut next_path = || PathBuf::from(OsStr::from_bytes(lines.next().unwrap_or_default()));
+    let mut next_path = || PathBuf::from(&*crate::model::os_str(lines.next().unwrap_or_default()));
     let path = next_path();
     let path = path.canonicalize().unwrap_or(path);
     let git_dir = next_path();

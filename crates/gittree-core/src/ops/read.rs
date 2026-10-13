@@ -184,8 +184,12 @@ pub fn diff_commit_file(
     args.push(oid.as_ref().as_ref());
     args.push("--".as_ref());
     // Both names, or Git cannot see that the file was renamed.
-    args.extend(file.orig_path.as_ref().map(RepoPath::as_os_str));
-    args.push(file.path.as_os_str());
+    let (orig_path, path) = (
+        file.orig_path.as_ref().map(RepoPath::as_os_str),
+        file.path.as_os_str(),
+    );
+    args.extend(orig_path.as_deref());
+    args.push(&path);
 
     let mut diff = parse_file_diff(&runner.read(args)?);
     diff.old_path = match file.change {
@@ -209,9 +213,9 @@ fn blob_size(runner: &GitRunner, rev: &str, path: &Option<RepoPath>) -> u64 {
     let Some(path) = path else { return 0 };
     let mut spec = format!("{rev}:").into_bytes();
     spec.extend_from_slice(&path.0);
-    let spec: &std::ffi::OsStr = std::os::unix::ffi::OsStrExt::from_bytes(&spec);
+    let spec = crate::model::os_str(&spec);
     runner
-        .read(["cat-file".as_ref(), "-s".as_ref(), spec])
+        .read(["cat-file".as_ref(), "-s".as_ref(), &*spec])
         .ok()
         .and_then(|out| String::from_utf8_lossy(&out).trim().parse().ok())
         .unwrap_or(0)
@@ -261,8 +265,9 @@ pub fn diff_worktree(
     args.push("--".as_ref());
     // A rename only shows in the index. Both names, or Git cannot see it.
     let orig_path = entry.orig_path.as_ref().filter(|_| staged);
-    args.extend(orig_path.map(RepoPath::as_os_str));
-    args.push(entry.path.as_os_str());
+    let (orig_arg, path) = (orig_path.map(RepoPath::as_os_str), entry.path.as_os_str());
+    args.extend(orig_arg.as_deref());
+    args.push(&path);
 
     let mut diff = parse_file_diff(&runner.read(args)?);
     let change = if staged { entry.index } else { entry.worktree };
@@ -289,24 +294,33 @@ pub fn diff_worktree(
     Ok(cut_large(diff, load_all))
 }
 
+/// Windows has no executable bit, and Git there records 100644.
+fn is_executable(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    return std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o111 != 0;
+    #[cfg(not(unix))]
+    return {
+        let _ = meta;
+        false
+    };
+}
+
 /// Builds the diff Git would print for a new file, from the file on disk.
 /// A file that cannot be read gives an empty diff.
 fn untracked_diff(runner: &GitRunner, path: &RepoPath) -> FileDiff {
-    use std::os::unix::fs::PermissionsExt;
-
     let full = runner.dir().join(path.as_os_str());
     let meta = std::fs::symlink_metadata(&full).ok();
     let is_link = meta.as_ref().is_some_and(|meta| meta.is_symlink());
     let content = if is_link {
         std::fs::read_link(&full)
-            .map(|target| std::os::unix::ffi::OsStringExt::into_vec(target.into_os_string()))
+            .map(|target| crate::model::os_bytes(target.as_os_str()))
             .unwrap_or_default()
     } else {
         std::fs::read(&full).unwrap_or_default()
     };
     let mode = match &meta {
         _ if is_link => "120000",
-        Some(meta) if meta.permissions().mode() & 0o111 != 0 => "100755",
+        Some(meta) if is_executable(meta) => "100755",
         _ => "100644",
     };
     let name = quote_path(b"a/", &path.0);

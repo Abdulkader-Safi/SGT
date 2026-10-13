@@ -147,7 +147,7 @@ Priorities: Must is required for v1. Should is built after the Musts, in the pos
 - **FR-CMD-02 [Must]** The app must have keyboard shortcuts for the core actions (the table in Stage 5), shown beside their menu items, and every Must feature must be reachable without a mouse.
   *Acceptance:* a tester can open a repository, stage a file, commit it, then push, using only the keyboard.
 - **FR-CMD-03 [Should]** The app should let the user rebind any shortcut through a `keymap.json` file.
-- **FR-CMD-04 [Must]** The app must provide a native macOS menu bar with these menus: File, Edit, View, Repository, Branch, Window, covering the same commands.
+- **FR-CMD-04 [Must]** On macOS the app must provide a native menu bar with these menus: File, Edit, View, Repository, Branch, Window, covering the same commands. On Windows and Linux, which have no system menu bar, the same commands are reached through the command palette and their shortcuts, with Ctrl in place of Cmd.
   *Acceptance:* every command in the palette is also in a menu, and standard items (Quit, Close Window, Copy, Paste, Undo) behave as on any Mac app.
 
 ### Settings and themes (SET)
@@ -246,7 +246,7 @@ None. The app has no accounts, no sign-in and no server. Authentication to Git r
 
 - System Git: every read and write of repository data goes through the `git` executable, version 2.39 or newer. Direction: both. Auth: none.
 - Git credential helper and SSH agent: used by Git itself for remotes. The app only relays prompts (FR-SYNC-03).
-- macOS: file dialogs, menu bar, light/dark appearance, file-system change events.
+- The operating system (macOS, Windows or Linux): file dialogs, light/dark appearance, file-system change events, and on macOS the menu bar.
 
 No web service, hosting provider or AI model is called in v1.
 
@@ -256,7 +256,7 @@ No web service, hosting provider or AI model is called in v1.
 - **NFR-02 Privacy and security:** repository content never leaves the machine through the app. No secrets are stored or logged. No network connections other than Git's own. Untrusted repositories cannot run code (FR-SAFE-04).
 - **NFR-03 Availability / offline:** every feature except the four network operations (clone, fetch, pull, push) works with no network. A network failure produces an error within Git's own timeout and never freezes the window.
 - **NFR-04 Scale:** 100,000 commits, 5,000 refs, 50,000 tracked files, 500 changed files in the working tree, single diffs up to 20,000 lines.
-- **NFR-05 Platforms:** macOS 13 or later on Apple silicon and Intel for v1. Code that is specific to macOS lives in one module, so Windows and Linux builds can follow in v1.1.
+- **NFR-05 Platforms:** macOS 13 or later on Apple silicon and Intel, Windows 10/11, and Linux (Ubuntu 22.04+, Debian 12+). Code that differs between them lives behind `cfg` in the `platform` module of the app and in the few core functions that touch processes, sockets and file modes. CI runs the checks on all three.
 - **NFR-06 Accessibility and locale:** English. All user-facing strings come from a locale file, none are hard-coded in views. Every Must feature works by keyboard. Text contrast is at least 4.5:1 in built-in themes. The system "reduce motion" setting turns off animations.
 - **NFR-07 Footprint:** the app bundle is under 40 MB and contains no web view or browser runtime.
 - **NFR-08 Git fidelity:** every change to a repository is made by the installed Git, so the result of any app action equals the result of the matching Git command, and hooks, filters, commit signing all behave as on the command line (in trusted repositories).
@@ -269,7 +269,7 @@ No web service, hosting provider or AI model is called in v1.
 - Built-in terminal: a terminal emulator is a large subsystem and every user already has one. v2.
 - User accounts and sign-in: nothing in v1 needs them. Only if hosting integrations arrive.
 - Arabic and right-to-left layout: needs per-screen layout review in the UI kit. v1.1 or v2.
-- Windows and Linux builds: v1.1.
+- Installers for Windows and Linux: after v1.
 - Worktrees, submodules, Git LFS management, bisect, Git Flow, patches: each works from the terminal meanwhile, and the app must not break repositories that use them. v2, in that rough order.
 - Partial clone options (shallow, sparse, blobless): v2. Repositories cloned that way elsewhere still open.
 - Profiles for multiple identities, SSH key management, external diff and merge tools, custom commands: v2.

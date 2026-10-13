@@ -214,7 +214,7 @@ pub fn abort_op(runner: &GitRunner, kind: OpKind) -> Result<(), GitError> {
 
 fn add(runner: &GitRunner, path: &RepoPath) -> Result<(), GitError> {
     runner
-        .write(["add".as_ref(), "--".as_ref(), path.as_os_str()])
+        .write(["add".as_ref(), "--".as_ref(), &*path.as_os_str()])
         .map(drop)
 }
 
@@ -243,7 +243,7 @@ pub fn resolve_side(runner: &GitRunner, path: &RepoPath, side: Side) -> Result<(
         "checkout".as_ref(),
         flag.as_ref(),
         "--".as_ref(),
-        path.as_os_str(),
+        &*path.as_os_str(),
     ]);
     match taken {
         Ok(_) => add(runner, path),
@@ -253,7 +253,7 @@ pub fn resolve_side(runner: &GitRunner, path: &RepoPath, side: Side) -> Result<(
                 "rm".as_ref(),
                 "-q".as_ref(),
                 "--".as_ref(),
-                path.as_os_str(),
+                &*path.as_os_str(),
             ])
             .map(drop),
     }

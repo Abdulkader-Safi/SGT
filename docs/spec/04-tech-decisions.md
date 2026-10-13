@@ -88,7 +88,7 @@ Versions below were read from crates.io on 2026-10-12.
 - Choice: none stored. Git's own credential helper and the SSH agent do the work. For prompts, the app sets `GIT_ASKPASS` and `SSH_ASKPASS` (with `SSH_ASKPASS_REQUIRE=force`) to its own executable. Started that way, the binary runs in a tiny helper mode: it sends the prompt text to the main app over a Unix domain socket, the app shows a dialog, and the helper prints the answer to stdout.
 - Considered: the `keyring` crate 4.2 to store tokens (dropped for v1: nothing to store until hosting integrations exist). A separate helper binary (dropped: one binary is simpler to bundle and sign).
 - Why: FR-SYNC-03, FR-SAFE-02, NFR-02.
-- Landmines: the socket path goes in an environment variable and the socket file is created with mode 0600 in a per-user temporary folder. Unix sockets need a different transport on Windows. That is a v1.1 problem and the code is isolated in the platform module.
+- Landmines: the socket path goes in an environment variable and the socket file is created with mode 0600 in a per-user temporary folder. The Rust standard library has no Unix sockets on Windows, so there the listener is a TCP port on 127.0.0.1 picked by the system. Any local program can connect to that port, so the one-time token is the only guard on Windows: it is 32 random bytes from the system and travels only in the environment of the Git process the app started.
 
 ## File watching
 
@@ -129,7 +129,7 @@ Versions below were read from crates.io on 2026-10-12.
 
 ## CI/CD
 
-- Choice: GitHub Actions on `macos-latest` for every push: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`. Releases are built locally in v1.
+- Choice: GitHub Actions on `macos-latest`, `ubuntu-latest` and `windows-latest` for every push: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`. Releases are built locally in v1.
 - Considered: a three-OS matrix now (dropped until v1.1: the other platforms are not supported yet, and a red build nobody fixes teaches people to ignore CI).
 - Why: one developer, zero budget. GitHub Actions is free for public repositories.
 
@@ -184,4 +184,4 @@ Defaults taken under the blanket sign-off on 2026-10-12.
 3. **Storage : RESOLVED.** JSON files, no database.
 4. **Secrets : RESOLVED.** Not stored. Prompts are relayed to Git.
 5. **Distribution : RESOLVED.** Local `.app` during development. Signed DMG on GitHub Releases for the first public version, which needs an Apple Developer membership at that point.
-6. **CI : RESOLVED.** GitHub Actions on macOS only until v1.1.
+6. **CI : RESOLVED.** GitHub Actions on macOS, Linux and Windows.

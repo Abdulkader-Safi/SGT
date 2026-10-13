@@ -4,10 +4,16 @@
 //! "askpass" program with the question as its argument. The app points them
 //! at its own binary, which passes the question over a local socket to the
 //! running app and prints the answer. Nothing typed is stored or logged.
+//!
+//! The socket is a Unix socket only this user can open. Windows has none in
+//! the standard library, so there it is a TCP port on the loopback address.
+//! Either way the helper must also send a one-time token.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(windows)]
+use std::net::{TcpListener as Listener, TcpStream as Stream};
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener as Listener, UnixStream as Stream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,15 +25,34 @@ pub const TOKEN_VAR: &str = "GITTREE_ASKPASS_TOKEN";
 /// the socket and removes its folder.
 pub struct Server {
     dir: PathBuf,
-    sock: PathBuf,
+    /// The socket's path, or `127.0.0.1:port` on Windows.
+    sock: String,
     token: String,
     stop: Arc<AtomicBool>,
 }
 
 fn random_hex(bytes: usize) -> std::io::Result<String> {
     let mut buffer = vec![0u8; bytes];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut buffer)?;
+    getrandom::fill(&mut buffer).map_err(|error| std::io::Error::other(error.to_string()))?;
     Ok(buffer.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Opens the socket inside `dir` and returns it with its address.
+#[cfg(unix)]
+fn listen(dir: &Path) -> std::io::Result<(Listener, String)> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    let sock = dir.join("s");
+    let listener = Listener::bind(&sock)?;
+    std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
+    Ok((listener, sock.to_string_lossy().into_owned()))
+}
+
+#[cfg(windows)]
+fn listen(_dir: &Path) -> std::io::Result<(Listener, String)> {
+    let listener = Listener::bind(("127.0.0.1", 0))?;
+    let address = listener.local_addr()?.to_string();
+    Ok((listener, address))
 }
 
 impl Server {
@@ -40,10 +65,7 @@ impl Server {
         // A folder only this user can enter, with a name nobody can guess.
         let dir = std::env::temp_dir().join(format!("sgt-askpass-{}", random_hex(8)?));
         std::fs::create_dir(&dir)?;
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
-        let sock = dir.join("s");
-        let listener = UnixListener::bind(&sock)?;
-        std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
+        let (listener, sock) = listen(&dir)?;
         let token = random_hex(32)?;
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -87,7 +109,7 @@ impl Server {
             // Without these ssh only uses askpass when it has no terminal.
             ("SSH_ASKPASS_REQUIRE".into(), "force".into()),
             ("DISPLAY".into(), ":0".into()),
-            (SOCK_VAR.into(), self.sock.to_string_lossy().into_owned()),
+            (SOCK_VAR.into(), self.sock.clone()),
             (TOKEN_VAR.into(), self.token.clone()),
         ]
     }
@@ -97,15 +119,15 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         // Wakes the accept loop so it sees the flag.
-        let _ = UnixStream::connect(&self.sock);
+        let _ = Stream::connect(&self.sock);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
 /// The helper's side: sends one question and returns the answer. `None`
 /// means the user cancelled, or the app is not listening.
-pub fn ask(sock: &Path, token: &str, question: &str) -> Option<String> {
-    let mut stream = UnixStream::connect(sock).ok()?;
+pub fn ask(sock: &str, token: &str, question: &str) -> Option<String> {
+    let mut stream = Stream::connect(sock).ok()?;
     let question = question.replace('\n', " ");
     stream
         .write_all(format!("{token}\n{question}\n").as_bytes())
@@ -142,8 +164,15 @@ mod tests {
         assert_eq!(ask(&server.token, "Username: "), None);
         assert_eq!(ask("wrong", "Password for 'https://example.com': "), None);
 
-        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!((mode(&server.dir), mode(&server.sock)), (0o700, 0o600));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                (mode(&server.dir), mode(Path::new(&server.sock))),
+                (0o700, 0o600)
+            );
+        }
         let dir = server.dir.clone();
         drop(server);
         assert!(!dir.exists());

@@ -29,7 +29,7 @@ She matters because plain-language dialogs and undo make the app safer for every
 - Teams that want code review, pull requests and CI status inside the Git client. They should use the browser or a client with hosting integrations.
 - People who want an AI agent to write commits or resolve conflicts.
 - Non-developers managing documents with Git.
-- Anyone on Windows or Linux in v1.
+- Anyone who needs a Windows or Linux installer in v1. The app runs there, built from source.
 
 The app will not add accounts, cloud sync or review features to please these groups.
 

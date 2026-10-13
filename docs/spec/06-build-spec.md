@@ -6,7 +6,7 @@ Status: signed off 2026-10-12. Sources: 01 to 05 as of that date.
 
 ## 1. What we're building
 
-Safi Git Tree (SGT) is a native desktop Git client for macOS, written in Rust and rendered with GPUI. It is for developers who work across many repositories and want a visual commit graph, line-level staging, in-app conflict resolution and undo for every local action, without an Electron app, an account or a subscription. Its main difference: it is native and free, and every Git action is done by the Git already installed on the machine, so the app always agrees with the command line. The mission is a personal, source-available tool (Apache-2.0) with no backend, no telemetry and no network use beyond Git's own.
+Safi Git Tree (SGT) is a native desktop Git client for macOS, Windows and Linux, written in Rust and rendered with GPUI. It is for developers who work across many repositories and want a visual commit graph, line-level staging, in-app conflict resolution and undo for every local action, without an Electron app, an account or a subscription. Its main difference: it is native and free, and every Git action is done by the Git already installed on the machine, so the app always agrees with the command line. The mission is a personal, source-available tool (Apache-2.0) with no backend, no telemetry and no network use beyond Git's own.
 
 ## 2. Stack (decided, see Stage 4)
 
@@ -27,7 +27,7 @@ Safi Git Tree (SGT) is a native desktop Git client for macOS, written in Rust an
 | Internationalisation | `rust-i18n` 4.2, `locales/en.yml` |
 | Errors and logging | `thiserror` in core, `anyhow` in the app, `tracing` to `~/Library/Logs/Safi Git Tree/gittree.log` |
 | Testing | `cargo test`, real Git in `tempfile` folders, a few headless UI tests, a bench binary |
-| CI | GitHub Actions on `macos-latest`: fmt, clippy with warnings denied, test |
+| CI | GitHub Actions on `macos-latest`, `ubuntu-latest` and `windows-latest`: fmt, clippy with warnings denied, test |
 | Distribution | `cargo-bundle` 0.12 for `Safi Git Tree.app`. Signed universal DMG later |
 | Backend, database, auth, hosting, payments, analytics, AI | None |
 
@@ -94,7 +94,7 @@ SGT/
   NOTICE                     third-party attributions
   README.md
   PROGRESS.md                milestone status, decisions, deviations
-  .github/workflows/ci.yml   fmt, clippy, test on macos-latest
+  .github/workflows/ci.yml   fmt, clippy, test on macOS, Linux and Windows
   docs/spec/                 these six files
   scripts/
     make-big-repo.sh         100,000-commit test repository via git fast-import
@@ -121,7 +121,7 @@ SGT/
         repo_state.rs        RepoState entity, run_op, refresh, watcher
         actions.rs           GPUI actions and the default keymap
         menus.rs             native menu bar
-        platform/            macOS-specific code, askpass socket
+        platform/            what differs between macOS, Windows and Linux
         views/
           git_check.rs  welcome.rs  workspace.rs  toolbar.rs  banners.rs
           sidebar.rs  graph.rs  graph_element.rs  commit_detail.rs
@@ -421,7 +421,7 @@ A throwaway spike of the top risk: can this stack load and draw a 100,000-commit
 - [ ] **FR-DIFF-03** Diffs are syntax-highlighted for the 19 listed languages in both themes, and unknown types show as plain text.
 - [ ] **FR-DIFF-09** Binary files show sizes instead of content, diffs over 20,000 lines load 2,000 with "Load all", and neither freezes the window beyond 100 ms.
 - [ ] **FR-BRANCH-01** The sidebar lists local branches, remotes, tags, stashes, all matching Git, marks the current branch, shows ahead/behind, filters by name, and clicking selects the commit.
-- [ ] **FR-CMD-04** A native menu bar has six menus (File, Edit, View, Repository, Branch, Window) covering every command, with standard Mac items behaving normally.
+- [ ] **FR-CMD-04** A native menu bar has six menus (File, Edit, View, Repository, Branch, Window) covering every command, with standard Mac items behaving normally. On Windows and Linux the same commands are in the command palette, with Ctrl shortcuts.
 - [ ] **FR-SET-01** Each setting applies without restart, persists, can be reset to its default.
 - [ ] **FR-SET-02** Dark and light themes ship, and "System" follows macOS appearance within 1 second.
 - [ ] **FR-SAFE-03** A network monitor shows zero outbound connections from the app while using every local feature.
@@ -460,7 +460,7 @@ A throwaway spike of the top risk: can this stack load and draw a 100,000-commit
 - [ ] **NFR-02** No repository content or secret leaves the machine or reaches a log, and untrusted repositories cannot run code.
 - [ ] **NFR-03** Everything except the four network operations (clone, fetch, pull, push) works offline, and network failures never freeze the window.
 - [ ] **NFR-04** The app handles 100,000 commits, 5,000 refs, 50,000 tracked files, 500 changed files and 20,000-line diffs.
-- [ ] **NFR-05** Runs on macOS 13 or later on Apple silicon and Intel, with macOS-specific code confined to the `platform` module.
+- [ ] **NFR-05** Runs on macOS 13 or later (Apple silicon and Intel), Windows 10/11 and Linux, with the differences behind `cfg` in the `platform` module and a few core functions. CI passes on all three.
 - [ ] **NFR-06** English strings all come from `locales/en.yml`, every Must feature works by keyboard, contrast is at least 4.5:1, and reduce-motion is honoured.
 - [ ] **NFR-07** The app bundle is under 40 MB with no web view.
 - [ ] **NFR-08** Every repository change is made by the installed Git and equals the matching command, with hooks and signing behaving as on the command line in trusted repositories.
@@ -498,7 +498,7 @@ Do not build these, even if they look easy:
 - A built-in terminal. The owner confirmed on 2026-10-13 that the app should not have one.
 - User accounts, sign-in, any server.
 - Arabic or any right-to-left layout. Any language besides English.
-- Windows and Linux builds or packaging.
+- Installers for Windows and Linux. The app builds and runs there from source.
 - Submodules, Git LFS management, bisect, Git Flow, patch create and apply. Worktrees come after the MVP, in M12.
 - Partial clone options (shallow, sparse, blobless).
 - Identity profiles, SSH key management, external diff or merge tools, custom commands.

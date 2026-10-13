@@ -181,7 +181,7 @@ impl Render for RootView {
         let p = crate::palette::palette(cx);
         // The workspace has its toolbar under the traffic lights. The other
         // screens get a plain strip with the app's name.
-        let strip = self.workspace.is_none().then(|| {
+        let strip = (crate::platform::MAC && self.workspace.is_none()).then(|| {
             div()
                 .h(px(40.))
                 .flex_none()

@@ -271,7 +271,12 @@ fn an_untracked_file_shows_as_all_added_whatever_its_name() {
     let repo = TestRepo::new();
     repo.write("base.txt", b"x\n");
     repo.commit_all("base");
-    let name = "we\"ird \u{e9}\tname.txt";
+    // Windows refuses a quote or a tab in a file name.
+    let name = if cfg!(windows) {
+        "we ird \u{e9} name.txt"
+    } else {
+        "we\"ird \u{e9}\tname.txt"
+    };
     repo.write(name, b"one\ntwo");
     repo.write("bin.dat", b"a\0b");
 

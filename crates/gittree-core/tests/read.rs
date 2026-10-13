@@ -54,6 +54,13 @@ fn lists_refs_like_git() {
     assert!(refs.iter().all(|r| !r.name.starts_with("refs/gittree/")));
 }
 
+/// A name Git has to quote. Windows refuses a tab in a file name.
+const ODD_NAME: &str = if cfg!(windows) {
+    "new name.txt"
+} else {
+    "new\tname.txt"
+};
+
 #[test]
 fn reads_commit_details_and_files() {
     let repo = TestRepo::new();
@@ -62,11 +69,7 @@ fn reads_commit_details_and_files() {
     write(&repo, "gone.txt", b"bye\n");
     let first = commit_all(&repo, 100, "first");
 
-    std::fs::rename(
-        repo.path().join("old name.txt"),
-        repo.path().join("new\tname.txt"),
-    )
-    .unwrap();
+    std::fs::rename(repo.path().join("old name.txt"), repo.path().join(ODD_NAME)).unwrap();
     std::fs::remove_file(repo.path().join("gone.txt")).unwrap();
     write(&repo, "keep.txt", b"changed\n");
     write(&repo, "added.txt", b"hi\n");
@@ -106,7 +109,7 @@ fn reads_commit_details_and_files() {
             (Change::Modified, "keep.txt".to_owned(), None),
             (
                 Change::Renamed,
-                "new\tname.txt".to_owned(),
+                ODD_NAME.to_owned(),
                 Some("old name.txt".to_owned())
             ),
         ]

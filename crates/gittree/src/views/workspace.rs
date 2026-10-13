@@ -26,7 +26,8 @@ use crate::app_state::AppState;
 use crate::palette::palette;
 use crate::repo_state::{Op, RepoEvent};
 use crate::repo_state::{RepoState, Scope};
-use gpui_kit::component::input::Undo;
+use gpui_kit::component::input::{Redo, Undo};
+use gpui_kit::component::tooltip::Tooltip;
 
 /// The main window for an open repository: toolbar, banner, sidebar, graph
 /// and detail panel.
@@ -162,6 +163,7 @@ impl Render for Workspace {
         let detached = matches!(repo.repository.head, Head::Detached(_));
         let (has_commits, has_changes) = (repo.has_commits(), !repo.status.is_empty());
         let busy = repo.busy;
+        let undo_info = repo.undo_info.clone();
         let head = match &repo.repository.head {
             Head::Branch(name) | Head::Unborn(name) => name.clone(),
             Head::Detached(oid) => t!("workspace.detached", oid = &oid[..7]).into_owned(),
@@ -307,8 +309,17 @@ impl Render for Workspace {
             )
             .child(divider())
             .child({
-                let undo = tool("undo", "undo", None, None);
-                if trusted {
+                // The tooltip names what Undo would take back, or says why
+                // it cannot (FR-UNDO-01).
+                let tip = match (&undo_info.undo, undo_info.undo_blocked) {
+                    (Some(_), true) => t!("undo.tip_blocked").into_owned(),
+                    (Some(label), false) => t!("undo.tip_undo", label = label).into_owned(),
+                    (None, _) => t!("undo.tip_none").into_owned(),
+                };
+                let can = trusted && undo_info.undo.is_some() && !undo_info.undo_blocked && !busy;
+                let undo = tool("undo", "undo", None, None)
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
+                if can {
                     undo.cursor_pointer()
                         .hover(|style| style.bg(p.bg_hover))
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -318,7 +329,23 @@ impl Render for Workspace {
                     off(undo)
                 }
             })
-            .child(off(tool("redo", "redo", None, None)))
+            .child({
+                let tip = match &undo_info.redo {
+                    Some(label) => t!("undo.tip_redo", label = label).into_owned(),
+                    None => t!("undo.tip_none_redo").into_owned(),
+                };
+                let redo = tool("redo", "redo", None, None)
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
+                if trusted && undo_info.redo.is_some() && !busy {
+                    redo.cursor_pointer()
+                        .hover(|style| style.bg(p.bg_hover))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.repo.update(cx, |repo, cx| repo.run_op(Op::Redo, cx));
+                        }))
+                } else {
+                    off(redo)
+                }
+            })
             .child(divider())
             .child(net(
                 tool(
@@ -537,6 +564,24 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Undo, _, cx| {
                 this.repo.update(cx, |repo, cx| repo.run_op(Op::Undo, cx));
             }))
+            .on_action(cx.listener(|this, _: &Redo, _, cx| {
+                this.repo.update(cx, |repo, cx| repo.run_op(Op::Redo, cx));
+            }))
+            .on_action(
+                cx.listener(|this, _: &crate::actions::ShowSnapshots, window, cx| {
+                    dialogs::snapshots(this.repo.clone(), window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::actions::CommandPalette, window, cx| {
+                    super::palette::open(
+                        this.repo.clone(),
+                        this.graph.read(cx).focus.clone(),
+                        window,
+                        cx,
+                    )
+                }),
+            )
             .child(toolbar)
             .children(untrusted)
             .children(progress)

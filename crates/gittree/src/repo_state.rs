@@ -162,6 +162,38 @@ pub enum Op {
     RemoveRemote(String),
     /// Takes back the last undoable action.
     Undo,
+    /// Runs the last undone action again.
+    Redo,
+    /// Brings back what a snapshot saved, in place or as a new branch.
+    RestoreSnapshot {
+        id: String,
+        branch: Option<String>,
+    },
+}
+
+/// What Undo and Redo would do right now, for the toolbar.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UndoInfo {
+    /// The label of the action Undo would take back.
+    pub undo: Option<String>,
+    /// Undo is not possible: the repository changed outside the app, or
+    /// the action reached a remote.
+    pub undo_blocked: bool,
+    pub redo: Option<String>,
+}
+
+fn undo_info(journal: &Journal, runner: &GitRunner) -> UndoInfo {
+    let undo = journal.next_undo();
+    let redo = journal
+        .next_redo()
+        .filter(|entry| journal.can_redo(runner, entry));
+    UndoInfo {
+        undo_blocked: undo
+            .as_ref()
+            .is_some_and(|entry| journal.can_undo(runner, entry).is_err()),
+        undo: undo.map(|entry| entry.label),
+        redo: redo.map(|entry| entry.label),
+    }
 }
 
 impl Op {
@@ -299,6 +331,9 @@ pub struct RepoState {
     pub status: Vec<StatusEntry>,
     pub stashes: Vec<Stash>,
     pub remotes: Vec<Remote>,
+    pub undo_info: UndoInfo,
+    /// Journal entries that saved something, newest first.
+    pub snapshots: Vec<gittree_core::journal::JournalEntry>,
     /// What a running network command last reported, and how to stop it.
     pub progress: Option<Progress>,
     pub net_running: bool,
@@ -352,6 +387,8 @@ impl RepoState {
             status: Vec::new(),
             stashes: Vec::new(),
             remotes: Vec::new(),
+            undo_info: UndoInfo::default(),
+            snapshots: Vec::new(),
             progress: None,
             net_running: false,
             net_cancel: Default::default(),
@@ -377,6 +414,17 @@ impl RepoState {
             search_task: Task::ready(()),
         };
         this.refresh(Scope::All, cx);
+        // Old journal entries go once per open, quietly.
+        let (journal, runner) = (this.journal.clone(), this.runner.clone());
+        cx.background_spawn(async move {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs() as i64);
+            if let Err(error) = journal.prune(&runner, now) {
+                tracing::warn!(%error, "journal pruning failed");
+            }
+        })
+        .detach();
         this
     }
 
@@ -860,6 +908,7 @@ impl RepoState {
     fn refresh_refs(&mut self, quiet_log: bool, cx: &mut Context<Self>) {
         let runner = self.runner.clone();
         let git_dir = self.repository.git_dir.clone();
+        let journal = self.journal.clone();
         let read = cx.background_spawn(async move {
             Ok::<_, GitError>((
                 read::list_refs(&runner)?,
@@ -868,6 +917,8 @@ impl RepoState {
                     branch::list_stashes(&runner).unwrap_or_default(),
                     merge::in_progress(&runner, &git_dir),
                     remote::list_remotes(&runner).unwrap_or_default(),
+                    undo_info(&journal, &runner),
+                    journal.snapshots(),
                 ),
             ))
         });
@@ -875,11 +926,15 @@ impl RepoState {
         self.refs_task = cx.spawn(async move |this, cx| {
             let result = read.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok((refs, head, (stashes, in_progress, remotes))) => {
+                Ok((refs, head, (stashes, in_progress, remotes, undo, snapshots))) => {
                     if stashes != this.stashes
                         || in_progress != this.in_progress
                         || remotes != this.remotes
+                        || undo != this.undo_info
+                        || snapshots != this.snapshots
                     {
+                        this.undo_info = undo;
+                        this.snapshots = snapshots;
                         this.stashes = stashes;
                         this.remotes = remotes;
                         if in_progress.is_none() {
@@ -1235,7 +1290,9 @@ fn op_label(op: &Op) -> String {
         | Op::AddRemote { .. }
         | Op::RenameRemote { .. }
         | Op::SetRemoteUrl { .. }
-        | Op::RemoveRemote(_) => String::new(),
+        | Op::RemoveRemote(_)
+        | Op::Redo
+        | Op::RestoreSnapshot { .. } => String::new(),
     }
 }
 
@@ -1515,7 +1572,20 @@ fn execute(
             if force && lease.is_none() {
                 return Ok(Done::Notice(t!("sync.nothing_to_force").into_owned()));
             }
-            remote::push(
+            // The commit about to be replaced on the remote is kept.
+            let pending = match (force, seen) {
+                (true, Some(replaced)) => {
+                    let action = Action::ForcePush {
+                        remote: remote_name.clone(),
+                        branch: branch.clone(),
+                        replaced: replaced.clone(),
+                    };
+                    let label = t!("journal.force_push", branch = branch).into_owned();
+                    Some(journal.begin(runner, action, label)?)
+                }
+                _ => None,
+            };
+            let pushed = remote::push(
                 runner,
                 remote_name,
                 branch,
@@ -1525,7 +1595,13 @@ fn execute(
                 &net.env,
                 &net.cancel,
                 report,
-            )?;
+            );
+            match (&pushed, pending) {
+                (Ok(()), Some(pending)) => drop(journal.finish(runner, pending)?),
+                (Err(_), Some(pending)) => journal.abandon(runner, pending),
+                _ => {}
+            }
+            pushed?;
             Ok(Done::Notice(
                 t!("sync.pushed", branch = branch, remote = remote_name).into_owned(),
             ))
@@ -1559,10 +1635,36 @@ fn execute(
                         t!("undo.done", label = entry.label).into_owned(),
                     ))
                 }
+                Err(Blocked::NotUndoable) => Ok(Done::Notice(
+                    t!("undo.remote", label = entry.label).into_owned(),
+                )),
                 Err(Blocked::RepositoryChanged | Blocked::AlreadyUndone) => Ok(Done::Notice(
                     t!("undo.blocked", label = entry.label).into_owned(),
                 )),
             }
+        }
+        Op::Redo => {
+            let Some(entry) = journal.next_redo() else {
+                return Ok(Done::Notice(t!("undo.nothing_redo").into_owned()));
+            };
+            if !journal.can_redo(runner, &entry) {
+                return Ok(Done::Notice(
+                    t!("undo.redo_blocked", label = entry.label).into_owned(),
+                ));
+            }
+            journal.redo(runner, git_dir, &entry)?;
+            Ok(Done::Notice(
+                t!("undo.redone", label = entry.label).into_owned(),
+            ))
+        }
+        Op::RestoreSnapshot { id, branch } => {
+            let Some(entry) = journal.snapshots().into_iter().find(|entry| entry.id == id) else {
+                return Ok(Done::Changed);
+            };
+            journal.restore(runner, &entry, branch.as_deref())?;
+            Ok(Done::Notice(
+                t!("snapshots.restored", label = entry.label).into_owned(),
+            ))
         }
     }
 }

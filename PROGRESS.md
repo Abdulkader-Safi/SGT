@@ -17,7 +17,8 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M4: branches, tags, stash | Built, 93 tests pass. Waiting on the manual checks listed below |
 | M5: merge, rebase, conflicts | Built, 103 tests pass. Waiting on the manual checks listed below |
 | M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
-| M7 to M10 | Not started |
+| M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
+| M8 to M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 
 ## M0: de-risk
@@ -384,3 +385,29 @@ No test talks to a real host. Please try by hand:
 - The force-push dialog says how many commits will be replaced. It does not list them.
 - Push does not ask which remote to use: it takes the upstream's remote, else `origin`, else the only one.
 - Headless tests switch the credential listener off, as they do the file watcher, because both answer from their own threads and GPUI's test scheduler does not allow that.
+
+## M7: undo, palette, keyboard
+
+### What exists
+
+- Redo. It brings undone actions back in the order they happened, and a new action ends the redo run. For a commit, merge, rebase, cherry-pick or revert, redo points the branch back at the commit the action made, so the ID is the same and conflicts are not met twice.
+- The Undo and Redo toolbar buttons, with a tooltip that names the action. Undo is greyed out with the reason when the repository changed outside the app. Cmd+Z and Cmd+Shift+Z go to a focused text field first.
+- The snapshot list (Repository menu, Snapshots): every entry that saved something, with Restore and "Restore to new branch". A force-push records the commit it replaced on the remote, which can come back as a branch.
+- Pruning on open: entries older than 30 days or beyond the newest 200 go, with their refs and backup folders.
+- The command palette (Cmd+Shift+P): every command with its shortcut, then branches and tags by name. Choosing a branch or tag selects its commit.
+
+### Checked by tests
+
+Undo then redo for commit, branch create (with checkout), checkout, rename, delete, tag create and delete, hard reset and discard, each comparing refs, HEAD, the index and the file on disk. The order of undo and redo, undo refused after an outside commit, restore in place and as a branch, the force-push snapshot, and pruning at 30 days. Through the app: the toolbar state after a reset, undo, redo, a snapshot restored as a branch, undo blocked after a terminal commit, and the palette finding "new branch" and running it.
+
+### Still needs doing by hand
+
+- The keyboard-only walkthrough the exit criteria ask for: open, stage, commit and push without the mouse.
+- The tooltips on the Undo and Redo buttons, and the snapshot list on screen.
+
+### Deviations
+
+- The snapshot list is a dialog, not its own window as in the design.
+- "Restore to new branch" names the branch `snapshot-<id>` itself. It does not ask for a name.
+- The palette opens with all commands listed. It does not keep a list of recent commands.
+- A force-push cannot be undone, since it changed the remote. Its old commit is in the snapshot list.

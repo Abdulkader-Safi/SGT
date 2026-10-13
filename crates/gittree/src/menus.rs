@@ -86,6 +86,7 @@ pub fn init(cx: &mut App) {
                 item("menu.push", Box::new(Push)),
                 separator(),
                 item("menu.stash", Box::new(Stash)),
+                item("snapshots.menu", Box::new(ShowSnapshots)),
                 separator(),
                 item("menu.trust", Box::new(TrustRepository)),
             ],

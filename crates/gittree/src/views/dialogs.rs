@@ -1126,3 +1126,110 @@ pub fn clone_repository(app: Entity<AppState>, window: &mut Window, cx: &mut App
             )
     });
 }
+
+/// The snapshot list: what was saved before a risky action, with Restore
+/// and "Restore to new branch" (FR-UNDO-02).
+pub fn snapshots(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
+    window.open_alert_dialog(cx, move |alert, _, cx| {
+        let p = palette(cx);
+        let state = repo.read(cx);
+        let (busy, trusted) = (state.busy, state.repository.trusted);
+        let rows = state.snapshots.iter().enumerate().map(|(ix, entry)| {
+            let snapshot = entry.snapshot.clone().unwrap_or_default();
+            // A commit a force-push replaced has no files to put back in
+            // place: it can only become a branch.
+            let in_place = snapshot.remote_ref.is_none();
+            let has_commit = snapshot.tree_ref.is_some() || snapshot.remote_ref.is_some();
+            let restore = |id: &'static str, label: String, branch: Option<String>| {
+                let (repo, entry_id) = (repo.clone(), entry.id.clone());
+                Button::new((id, ix))
+                    .xsmall()
+                    .label(label)
+                    .disabled(busy || !trusted)
+                    .on_click(move |_, _, cx| {
+                        let op = Op::RestoreSnapshot {
+                            id: entry_id.clone(),
+                            branch: branch.clone(),
+                        };
+                        repo.update(cx, |repo, cx| repo.run_op(op, cx))
+                    })
+            };
+            let short: String = entry.id.chars().take(8).collect();
+            h_flex()
+                .min_h(px(48.))
+                .px_3()
+                .py_1()
+                .gap_3()
+                .border_b_1()
+                .border_color(p.border)
+                .child(ic("clock", 14., p.text_secondary))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .truncate()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(entry.label.clone()),
+                        )
+                        .child(div().text_size(px(12.)).text_color(p.text_tertiary).child(
+                            format!(
+                                "{}{}",
+                                crate::local_time(entry.time),
+                                if entry.undone {
+                                    format!(" · {}", t!("snapshots.undone"))
+                                } else {
+                                    String::new()
+                                }
+                            ),
+                        )),
+                )
+                .when(has_commit, |row| {
+                    row.child(restore(
+                        "restore-branch",
+                        t!("snapshots.restore_branch").into_owned(),
+                        Some(format!("snapshot-{short}")),
+                    ))
+                })
+                .when(in_place, |row| {
+                    row.child(
+                        restore("restore", t!("snapshots.restore").into_owned(), None).primary(),
+                    )
+                })
+        });
+        let empty = state.snapshots.is_empty().then(|| {
+            v_flex()
+                .items_center()
+                .gap_1()
+                .p_6()
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(t!("snapshots.empty_title").into_owned()),
+                )
+                .child(
+                    div()
+                        .text_center()
+                        .text_color(p.text_secondary)
+                        .child(t!("snapshots.empty_text").into_owned()),
+                )
+        });
+        alert
+            .width(px(600.))
+            .title(t!("snapshots.title").into_owned())
+            .description(t!("snapshots.text").into_owned())
+            .child(
+                v_flex()
+                    .max_h(px(360.))
+                    .overflow_hidden()
+                    .rounded(px(8.))
+                    .bg(p.bg_panel)
+                    .border_1()
+                    .border_color(p.border)
+                    .children(rows)
+                    .children(empty),
+            )
+            .ok_text(t!("snapshots.close").into_owned())
+    });
+}

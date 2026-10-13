@@ -766,3 +766,108 @@ fn pushes_fetches_pulls_and_clones_through_the_app(cx: &mut TestAppContext) {
     });
     assert!(target.join("b.txt").exists());
 }
+
+#[gpui_kit::test]
+fn undo_redo_snapshots_and_the_palette(cx: &mut TestAppContext) {
+    use gittree::repo_state::Op;
+    use gittree_core::ops::merge::ResetMode;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let write = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+    let git_out = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
+    };
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    git(dir.path(), &["config", "user.name", "Ada"]);
+    git(dir.path(), &["config", "user.email", "ada@example.com"]);
+    write("a.txt", "one\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "first"]);
+    write("a.txt", "two\n");
+    git(dir.path(), &["commit", "-q", "-am", "second"]);
+    let second = git_out(&["rev-parse", "HEAD"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let run = |cx: &mut TestAppContext, op: Op| {
+        cx.update(|cx| repo.update(cx, |repo, cx| repo.run_op(op, cx)));
+        cx.run_until_parked();
+        shell.in_window(cx, |_, _| ());
+        cx.run_until_parked();
+    };
+    let info = |cx: &mut TestAppContext| cx.update(|cx| repo.read(cx).undo_info.clone());
+    assert_eq!(info(cx).undo, None);
+
+    // A hard reset with an uncommitted change saves a snapshot.
+    write("a.txt", "work in progress\n");
+    run(
+        cx,
+        Op::Reset {
+            target: "HEAD~1".into(),
+            mode: ResetMode::Hard,
+        },
+    );
+    assert_ne!(git_out(&["rev-parse", "HEAD"]), second);
+    let undo = info(cx);
+    assert!(undo.undo.is_some() && !undo.undo_blocked && undo.redo.is_none());
+    cx.update(|cx| assert_eq!(repo.read(cx).snapshots.len(), 1));
+
+    // Undo puts the commit and the change back, and offers redo.
+    run(cx, Op::Undo);
+    assert_eq!(git_out(&["rev-parse", "HEAD"]), second);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "work in progress\n"
+    );
+    assert!(info(cx).redo.is_some());
+    run(cx, Op::Redo);
+    assert_ne!(git_out(&["rev-parse", "HEAD"]), second);
+    assert!(info(cx).redo.is_none());
+
+    // The snapshot can still come back as a branch.
+    let id = cx.update(|cx| repo.read(cx).snapshots[0].id.clone());
+    run(
+        cx,
+        Op::RestoreSnapshot {
+            id,
+            branch: Some("rescued".into()),
+        },
+    );
+    assert_eq!(git_out(&["show", "rescued:a.txt"]), "work in progress");
+
+    // A commit made outside the app blocks undo, and the app knows.
+    write("b.txt", "b\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "made in a terminal"]);
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.refresh(gittree::repo_state::Scope::Refs, cx)
+        })
+    });
+    cx.run_until_parked();
+    assert!(info(cx).undo_blocked);
+
+    // The palette finds a command by name and runs it.
+    shell.in_window(cx, |window, cx| {
+        window.dispatch_action(Box::new(gittree::actions::CommandPalette), cx)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |window, cx| window.input("new branch", cx));
+    shell.in_window(cx, |window, cx| window.press("enter", cx));
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |window, cx| window.input("from-palette", cx));
+    shell.in_window(cx, |window, cx| window.press("enter", cx));
+    shell.in_window(cx, |_, _| ());
+    assert_eq!(
+        git_out(&["rev-parse", "--abbrev-ref", "HEAD"]),
+        "from-palette"
+    );
+}

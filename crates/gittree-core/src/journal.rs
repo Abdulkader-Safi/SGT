@@ -604,9 +604,13 @@ impl Journal {
         use crate::ops::{branch, merge, stage};
         let has_commits = entry.head_before.oid.is_some();
         match &entry.action {
-            Action::Commit { message, amend } => {
-                stage::commit(runner, message, *amend).map(drop)?
-            }
+            // The commit the action made still exists, so redo points the
+            // branch back at it. Running the action again would make a new
+            // commit with a new time and ID.
+            Action::Commit { message, amend } => match &entry.head_after.oid {
+                Some(oid) => runner.write(["reset", "-q", "--soft", oid]).map(drop)?,
+                None => stage::commit(runner, message, *amend).map(drop)?,
+            },
             Action::DiscardFiles { tracked, untracked } => {
                 stage::discard_files(runner, tracked, untracked, has_commits)?
             }
@@ -643,6 +647,17 @@ impl Journal {
                 if let Some(stash) = stashes.iter().find(|stash| &stash.oid == oid) {
                     branch::stash_drop(runner, stash.index)?;
                 }
+            }
+            // The same holds here, and it also spares a second round of
+            // conflicts.
+            Action::Merge { .. }
+            | Action::Rebase { .. }
+            | Action::CherryPick { .. }
+            | Action::Revert { .. }
+                if entry.head_after.oid.is_some() =>
+            {
+                let oid = entry.head_after.oid.as_deref().unwrap_or_default();
+                runner.write(["reset", "-q", "--hard", oid]).map(drop)?
             }
             Action::Merge { branch, no_ff } => merge::merge(runner, git_dir, branch, *no_ff)?,
             Action::Rebase { onto } => merge::rebase(runner, git_dir, onto)?,

@@ -249,6 +249,7 @@ journal:
   delete_tag: "Delete tag %{name}"
   stash_push: "Stash changes"
   stash_drop: "Drop a stash"
+  force_push: "Force-push %{branch}"
   merge: "Merge %{branch}"
   rebase: "Rebase onto %{onto}"
   cherry_pick: "Cherry-pick %{oid}"
@@ -257,6 +258,15 @@ journal:
 
 undo:
   nothing: "Nothing to undo."
+  nothing_redo: "Nothing to redo."
+  redone: "Redone: %{label}"
+  redo_blocked: "Cannot redo \"%{label}\" because the repository changed since then."
+  remote: "\"%{label}\" reached the remote and cannot be undone here. Its old commit is in Snapshots."
+  tip_undo: "Undo: %{label}"
+  tip_redo: "Redo: %{label}"
+  tip_blocked: "Cannot undo: the repository changed outside the app"
+  tip_none: "Nothing to undo"
+  tip_none_redo: "Nothing to redo"
   done: "Undone: %{label}"
   blocked: "Cannot undo \"%{label}\" because the repository changed since then."
 
@@ -426,3 +436,21 @@ clone:
   dest_help: "A folder named after the repository is made inside."
   action: "Clone"
   starting: "Starting"
+
+snapshots:
+  title: "Snapshots"
+  text: "Saved before any action that can lose work. Kept for 30 days."
+  empty_title: "No snapshots yet"
+  empty_text: "One is saved each time you discard, reset, rebase or force-push."
+  restore: "Restore"
+  restore_branch: "Restore to new branch"
+  restored: "Restored: %{label}"
+  undone: "undone"
+  close: "Close"
+  menu: "Snapshots…"
+
+palette:
+  placeholder: "Type a command, a branch or a tag"
+  commands: "Commands"
+  refs: "Branches and tags"
+  empty: "Nothing matches."

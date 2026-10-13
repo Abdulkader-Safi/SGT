@@ -5,6 +5,7 @@ pub mod diff;
 pub mod git_check;
 pub mod graph;
 pub mod graph_element;
+pub mod palette;
 pub mod root;
 pub mod settings;
 pub mod sidebar;

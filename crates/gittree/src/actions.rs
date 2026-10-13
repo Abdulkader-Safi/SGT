@@ -26,6 +26,7 @@ actions!(
         ToggleDiffView,
         Commit,
         StageSelection,
+        ShowSnapshots,
         Refresh,
         Fetch,
         Pull,
@@ -37,6 +38,40 @@ actions!(
         Zoom,
     ]
 );
+
+/// Every command the palette offers: its name, icon, shortcut and action.
+pub fn commands() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    Box<dyn gpui_kit::Action>,
+)> {
+    vec![
+        ("menu.open", "folder", "⌘O", Box::new(OpenRepository)),
+        ("menu.clone", "clone", "⇧⌘O", Box::new(CloneRepository)),
+        ("menu.init", "plus", "", Box::new(InitRepository)),
+        (
+            "menu.close_repository",
+            "close",
+            "",
+            Box::new(CloseRepository),
+        ),
+        ("menu.settings", "settings", "⌘,", Box::new(OpenSettings)),
+        ("menu.refresh", "fetch", "⌘R", Box::new(Refresh)),
+        ("menu.fetch", "fetch", "⇧⌘F", Box::new(Fetch)),
+        ("menu.pull", "pull", "⇧⌘L", Box::new(Pull)),
+        ("menu.push", "push", "⇧⌘K", Box::new(Push)),
+        ("menu.new_branch", "branch", "⌘B", Box::new(NewBranch)),
+        ("menu.stash", "stash", "⇧⌘S", Box::new(Stash)),
+        ("menu.commit", "commit", "⌘↵", Box::new(Commit)),
+        ("menu.focus_graph", "commit", "⌘1", Box::new(FocusGraph)),
+        ("menu.focus_changes", "file", "⌘2", Box::new(FocusChanges)),
+        ("menu.search", "search", "⌘F", Box::new(SearchCommits)),
+        ("menu.toggle_diff", "split", "⇧⌘D", Box::new(ToggleDiffView)),
+        ("snapshots.menu", "clock", "", Box::new(ShowSnapshots)),
+        ("menu.trust", "shield", "", Box::new(TrustRepository)),
+    ]
+}
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([

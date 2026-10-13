@@ -19,12 +19,14 @@ Early development. What works today:
 - Branches, tags and stashes: create, rename, delete, check out, with right-click menus and dialogs.
 - Merge, rebase, cherry-pick, revert and reset, with a conflict view that resolves each region or the whole file.
 - Clone, fetch, pull and push with progress and cancel, force-push with a lease, remotes, and sign-in prompts as app dialogs.
-- Undo for commits, discards, checkouts, merges, rebases, resets, and branch, tag and stash changes.
+- Undo and redo for commits, discards, checkouts, merges, rebases, resets, and branch, tag and stash changes.
+- Snapshots of anything a risky action could lose, kept for 30 days.
+- A command palette (Cmd+Shift+P).
 - An MCP server (`gittree mcp`), so a coding agent can read status, history, diffs and blame, and stage and commit when you allow it.
 - The view updates by itself when the repository changes on disk.
 - Settings, light and dark themes, and the window layout restored at launch.
 
-Not built yet: redo, the command palette, the snapshot list. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
+Not built yet: packaging as an app bundle, blame and file history, worktrees and agent sessions, AI helpers, pull requests. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
 
 ## Requirements
 

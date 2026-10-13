@@ -104,6 +104,14 @@ settings:
   mcp_access: "MCP server access"
   mcp_read_only: "Read only"
   mcp_read_write: "Read and change"
+  ai_agent: "AI helper"
+  ai_claude: "Claude Code"
+  ai_codex: "Codex"
+  ai_gemini: "Gemini CLI"
+  ai_other: "Other command"
+  ai_help: "The installed command-line agent that writes commit messages and explains commits. It gets the diff and may change nothing. The app sends nothing itself and keeps no key."
+  ai_command: "Other command"
+  ai_command_help: "Used when the AI helper is set to Other. The question arrives on standard input."
   mcp_help: "What an agent may do through \"gittree mcp\". Changes work only in trusted repositories, and a commit an agent makes can be undone here."
 
 menu:
@@ -169,6 +177,17 @@ sidebar:
   stashes: "Stashes"
   no_stashes: "No stashes. Stashed changes will show here."
 
+ai:
+  nothing_staged: "Nothing is staged, so there is nothing to describe."
+  write: "Write message"
+  writing: "Writing…"
+  written: "Written by %{agent} from the staged diff. Edit it as you like."
+  again: "Try again"
+  explain: "Explain this commit"
+  explaining: "Explaining…"
+  explained: "What this commit does"
+  copy: "Copy"
+  caveat: "From the commit message and its diff. It can be wrong: check the diff."
 agents:
   title: "Agent sessions"
   hint: "Each runs in its own worktree, so your files stay as they are."

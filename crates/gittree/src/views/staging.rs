@@ -112,6 +112,10 @@ impl StagingView {
                     let (summary, description) = split_message(message);
                     this.set_message(&summary, &description, window, cx);
                 }
+                RepoEvent::MessageWritten(message) => {
+                    let (summary, description) = split_message(message);
+                    this.set_message(&summary, &description, window, cx);
+                }
                 _ => {}
             },
         )
@@ -520,6 +524,15 @@ impl Render for StagingView {
         let pushed = self.amend && repo.head_is_pushed();
         let can_commit = self.can_commit(cx);
         let amend = self.amend;
+        let (writing, written_by) = (repo.ai.writing, repo.ai.written_by.clone());
+        let rewrite = written_by.is_some();
+        // Asks the agent chosen in Settings for a message.
+        let write_message = cx.listener(|this, _: &gpui_kit::ClickEvent, _, cx| {
+            let settings = &this.app.read(cx).settings;
+            let (kind, command) = (settings.ai_agent, settings.ai_command.clone());
+            this.repo
+                .update(cx, |repo, cx| repo.write_message(kind, &command, cx));
+        });
         let summary_len = self.summary.read(cx).value().trim().chars().count();
         let too_long = summary_len > SUMMARY_LIMIT;
 
@@ -619,6 +632,32 @@ impl Render for StagingView {
                     p.warning,
                 ))
             })
+            // Its own row: the commit row has no room in a narrow panel.
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(div().flex_1().children(written_by.map(|agent| {
+                        note(
+                            "commit",
+                            t!("ai.written", agent = agent).into_owned(),
+                            p.text_tertiary,
+                        )
+                    })))
+                    .child(
+                        Button::new("write-message")
+                            .small()
+                            .loading(writing)
+                            .disabled(writing || nothing_staged || !trusted)
+                            .label(if writing {
+                                t!("ai.writing").into_owned()
+                            } else if rewrite {
+                                t!("ai.again").into_owned()
+                            } else {
+                                t!("ai.write").into_owned()
+                            })
+                            .on_click(write_message),
+                    ),
+            )
             .child(
                 h_flex()
                     .gap_2()

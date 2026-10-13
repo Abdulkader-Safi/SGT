@@ -116,6 +116,76 @@ impl Render for CommitDetail {
                     .on_click(move |_, _, cx| repo.update(cx, |repo, cx| repo.select_oid(&oid, cx)))
             }),
         );
+        // "Explain this commit", then what the agent said about it.
+        let explained = repo
+            .ai
+            .explained
+            .as_ref()
+            .filter(|(oid, _)| *oid == details.oid);
+        let explanation = match explained {
+            Some((_, text)) => {
+                let copied = text.clone();
+                v_flex()
+                    .p(px(12.))
+                    .gap_2()
+                    .rounded(px(8.))
+                    .bg(p.bg_elevated)
+                    .border_1()
+                    .border_color(p.border)
+                    .child(
+                        h_flex()
+                            .gap(px(6.))
+                            .child(ic("commit", 14., p.accent))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(t!("ai.explained").into_owned()),
+                            )
+                            .child(
+                                div()
+                                    .id("copy-explanation")
+                                    .cursor_pointer()
+                                    .text_size(px(12.))
+                                    .text_color(p.text_secondary)
+                                    .child(t!("ai.copy").into_owned())
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            copied.clone(),
+                                        ))
+                                    }),
+                            ),
+                    )
+                    .child(div().text_color(p.text_secondary).child(text.clone()))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(p.text_tertiary)
+                            .child(t!("ai.caveat").into_owned()),
+                    )
+                    .into_any_element()
+            }
+            None if repo.ai.explaining.as_ref() == Some(&details.oid) => div()
+                .text_size(px(12.))
+                .text_color(p.text_tertiary)
+                .child(t!("ai.explaining").into_owned())
+                .into_any_element(),
+            None => {
+                let repo = self.repo.clone();
+                div()
+                    .id("explain")
+                    .cursor_pointer()
+                    .text_size(px(12.))
+                    .text_color(p.accent)
+                    .child(t!("ai.explain").into_owned())
+                    .on_click(move |_, _, cx| {
+                        let settings = &crate::app_state::app_state(cx).read(cx).settings;
+                        let (kind, command) = (settings.ai_agent, settings.ai_command.clone());
+                        repo.update(cx, |repo, cx| repo.explain_commit(kind, &command, cx))
+                    })
+                    .into_any_element()
+            }
+        };
         let oid = details.oid.to_string();
         let same_committer = details.author_name == details.committer_name
             && details.author_email == details.committer_email;
@@ -186,7 +256,8 @@ impl Render for CommitDetail {
                             parents.into_any_element(),
                         ))
                     }),
-            );
+            )
+            .child(explanation);
 
         let file_link = |id: &'static str, mode: FileMode| {
             let repo = self.repo.clone();

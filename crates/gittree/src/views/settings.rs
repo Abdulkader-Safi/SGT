@@ -1,3 +1,4 @@
+use gittree_core::agent::AgentKind;
 use gittree_core::store::{DiffView, McpAccess, PullMode, Settings as Stored, ThemeChoice};
 use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
@@ -179,20 +180,45 @@ impl Render for SettingsView {
                 ),
             ));
 
-        let agents = SettingGroup::new().title(label("settings.agents")).item(
-            SettingItem::new(
-                label("settings.mcp_access"),
-                choice(
-                    &[
-                        (McpAccess::ReadOnly, "settings.mcp_read_only"),
-                        (McpAccess::ReadWrite, "settings.mcp_read_write"),
-                    ],
-                    |s| s.mcp_access,
-                    |s, v| s.mcp_access = v,
-                ),
+        let agents = SettingGroup::new()
+            .title(label("settings.agents"))
+            .item(
+                SettingItem::new(
+                    label("settings.mcp_access"),
+                    choice(
+                        &[
+                            (McpAccess::ReadOnly, "settings.mcp_read_only"),
+                            (McpAccess::ReadWrite, "settings.mcp_read_write"),
+                        ],
+                        |s| s.mcp_access,
+                        |s, v| s.mcp_access = v,
+                    ),
+                )
+                .description(label("settings.mcp_help")),
             )
-            .description(label("settings.mcp_help")),
-        );
+            .item(
+                SettingItem::new(
+                    label("settings.ai_agent"),
+                    choice(
+                        &[
+                            (AgentKind::Claude, "settings.ai_claude"),
+                            (AgentKind::Codex, "settings.ai_codex"),
+                            (AgentKind::Gemini, "settings.ai_gemini"),
+                            (AgentKind::Other, "settings.ai_other"),
+                        ],
+                        |s| s.ai_agent,
+                        |s, v| s.ai_agent = v,
+                    ),
+                )
+                .description(label("settings.ai_help")),
+            )
+            .item(
+                SettingItem::new(
+                    label("settings.ai_command"),
+                    text(|s| s.ai_command.clone(), |s, v| s.ai_command = v),
+                )
+                .description(label("settings.ai_command_help")),
+            );
 
         div().size_full().child(
             Settings::new("settings").page(

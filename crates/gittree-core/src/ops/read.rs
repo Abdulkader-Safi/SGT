@@ -117,6 +117,30 @@ pub fn commit_details(runner: &GitRunner, oid: &Oid) -> Result<CommitDetails, Gi
     })
 }
 
+/// The staged changes as one patch, for an agent to read.
+pub fn staged_patch(runner: &GitRunner) -> Result<Vec<u8>, GitError> {
+    runner.read([
+        "diff",
+        "--cached",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+    ])
+}
+
+/// A commit's message and patch, for an agent to read.
+pub fn commit_patch(runner: &GitRunner, oid: &Oid) -> Result<Vec<u8>, GitError> {
+    runner.read([
+        "show",
+        "--format=%B",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--diff-merges=first-parent",
+        oid,
+    ])
+}
+
 /// The files a commit changed. A merge is compared with its first parent.
 pub fn commit_files(runner: &GitRunner, oid: &Oid) -> Result<Vec<FileChange>, GitError> {
     let out = runner.read([

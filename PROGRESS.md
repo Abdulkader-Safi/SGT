@@ -22,6 +22,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M9 and M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
+| M13: AI helpers and Launchpad | Commit messages and commit explanations built, 157 tests pass. Conflict suggestions, the commit composer and Launchpad not started |
 
 ## M0: de-risk
 
@@ -523,3 +524,28 @@ Each may edit files in its worktree without asking, and nothing wider. None can 
 - Plain worktrees made outside the app are not listed. Only sessions are.
 - An app started from the Finder has a short `PATH`. The runner also looks in `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin` and `/usr/local/bin`. An agent installed elsewhere (for example under nvm) needs "Other" with its full path.
 - The toolbar button reuses the merge icon.
+
+## M13: AI helpers and Launchpad
+
+### Commit messages and explanations (built)
+
+- Settings has "AI helper": Claude Code, Codex, Gemini CLI or another command.
+- "Write message" in the commit box sends the staged diff to that agent and puts its answer in the summary and description. A note says who wrote it, and the button becomes "Try again".
+- "Explain this commit" in the commit details shows a card with the agent's explanation, a Copy link and a line saying it can be wrong.
+- The question goes to the agent on standard input, so a long diff never has to fit on a command line. A diff is cut at 100,000 bytes.
+- The agent runs in an empty temporary folder, not in the repository. It reads no project settings or hooks from a repository, and has nothing there to change.
+- Read-only commands: `claude -p`, `codex exec --sandbox read-only -`, `gemini -p`, each with the question on standard input.
+- `an_agent_writes_a_message_and_explains_a_commit` runs a stand-in script as the agent. One real question was put to the installed Claude Code this way on 2026-10-13 and it answered with a usable message.
+
+### Decisions and differences from the design
+
+- The prompt tells the agent to add no trailers. The real run above added a Co-Authored-By line before that was in the prompt.
+- "Write message" sits on its own row above the commit row. In a narrow panel the design's single row pushed the Commit button out of reach, which a test caught.
+- There is no way to stop a question that is taking long. It ends when the agent does.
+- The explanation is kept for one commit at a time and is not saved.
+- Codex and Gemini were not run for real.
+
+### Not started
+
+- Conflict suggestions and the commit composer.
+- Launchpad: pull requests and issues through `gh`, and creating a pull request.

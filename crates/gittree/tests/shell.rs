@@ -1016,3 +1016,95 @@ fn an_agent_session_runs_in_its_own_worktree(cx: &mut TestAppContext) {
     wait(cx, &|repo| repo.sessions.is_empty());
     assert!(!worktree.exists());
 }
+
+/// FR-AGENT-05: the chosen agent writes a commit message from the staged
+/// diff and explains a commit. A stand-in script plays the agent and saves
+/// what it was asked.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn an_agent_writes_a_message_and_explains_a_commit(cx: &mut TestAppContext) {
+    use gittree::repo_state::{RepoEvent, Scope};
+    use gittree_core::agent::AgentKind;
+    use std::os::unix::fs::PermissionsExt;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() {}\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() { run() }\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    let asked = outside.path().join("asked.txt");
+    let script = outside.path().join("agent.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncat > '{}'\nprintf '```\\nCall run\\n\\nFrom main.\\n```\\n'\n",
+            asked.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let command = script.to_str().unwrap().to_owned();
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.refresh(Scope::Status, cx)));
+    cx.run_until_parked();
+    let written = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let _watch = cx.update(|cx| {
+        let written = written.clone();
+        cx.subscribe(&repo, move |_, event: &RepoEvent, _| {
+            if let RepoEvent::MessageWritten(message) = event {
+                *written.borrow_mut() = Some(message.clone());
+            }
+        })
+    });
+    let wait = |cx: &mut TestAppContext, done: &dyn Fn(&gittree::repo_state::RepoState) -> bool| {
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if cx.update(|cx| done(repo.read(cx))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("timed out");
+    };
+
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.write_message(AgentKind::Other, &command, cx)
+        })
+    });
+    cx.update(|cx| assert!(repo.read(cx).ai.writing));
+    wait(cx, &|repo| !repo.ai.writing);
+    // The code fence the agent wrapped it in is gone.
+    assert_eq!(written.borrow().as_deref(), Some("Call run\n\nFrom main."));
+    let question = std::fs::read_to_string(&asked).unwrap();
+    assert!(question.starts_with("Write a Git commit message"));
+    assert!(question.contains("+fn main() { run() }"));
+
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.select_row(0, cx)));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.explain_commit(AgentKind::Other, &command, cx)
+        })
+    });
+    wait(cx, &|repo| repo.ai.explained.is_some());
+    shell.in_window(cx, |_, _| ());
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        let (oid, text) = repo.ai.explained.as_ref().unwrap();
+        assert_eq!(Some(oid), repo.selection.oid.as_ref());
+        assert_eq!(text, "Call run\n\nFrom main.");
+    });
+    assert!(
+        std::fs::read_to_string(&asked)
+            .unwrap()
+            .starts_with("Explain what the commit")
+    );
+}

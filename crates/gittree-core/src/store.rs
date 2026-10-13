@@ -131,6 +131,10 @@ pub struct Settings {
     pub auto_fetch_minutes: u32,
     /// What a coding agent may do through the MCP server.
     pub mcp_access: McpAccess,
+    /// The installed agent that writes commit messages and explains
+    /// commits, and the command when it is `Other`.
+    pub ai_agent: crate::agent::AgentKind,
+    pub ai_command: String,
 }
 
 /// What the MCP server lets an agent do.
@@ -160,6 +164,8 @@ impl Default for Settings {
             clone_dir: if developer.is_dir() { developer } else { home },
             auto_fetch_minutes: 0,
             mcp_access: McpAccess::ReadOnly,
+            ai_agent: crate::agent::AgentKind::Claude,
+            ai_command: String::new(),
         }
     }
 }

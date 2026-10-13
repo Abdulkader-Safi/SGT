@@ -40,6 +40,8 @@ pub enum Scope {
 pub enum RepoEvent {
     /// A Git call failed and the user should hear about it.
     Error(GitError),
+    /// An agent wrote this commit message for the staged changes.
+    MessageWritten(String),
     /// The app made this worktree, so it joins the trust list.
     WorktreeCreated(std::path::PathBuf),
     /// The graph should bring this row into view.
@@ -316,6 +318,19 @@ pub struct Selection {
     pub diff_loading: bool,
 }
 
+/// What the AI helpers are doing and what they last wrote (FR-AGENT-05).
+#[derive(Default)]
+pub struct Ai {
+    /// A commit message is being written.
+    pub writing: bool,
+    /// The agent that wrote the message now in the commit box.
+    pub written_by: Option<String>,
+    /// The commit being explained.
+    pub explaining: Option<Oid>,
+    /// A commit and its explanation.
+    pub explained: Option<(Oid, String)>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FileMode {
     Blame,
@@ -368,6 +383,9 @@ pub struct RepoState {
     /// Indexes into `refs`, by the commit each points at.
     pub refs_at: HashMap<Oid, Vec<usize>>,
     pub selection: Selection,
+    pub ai: Ai,
+    ai_task: Task<()>,
+    explain_task: Task<()>,
     /// Agent sessions, oldest first. Saved in the repository's own folder.
     pub sessions: Vec<Session>,
     /// The sessions view shows in place of the graph.
@@ -465,6 +483,9 @@ impl RepoState {
             search_task: Task::ready(()),
             file_view: None,
             file_task: Task::ready(()),
+            ai: Ai::default(),
+            ai_task: Task::ready(()),
+            explain_task: Task::ready(()),
             sessions: Vec::new(),
             show_agents: false,
             pending_session: None,
@@ -754,6 +775,7 @@ impl RepoState {
                         cx.emit(RepoEvent::Notice(t!("merge.stopped").into_owned()));
                     }
                     Ok(Done::Committed(oid)) => {
+                        this.ai.written_by = None;
                         this.after_commit = Some(oid);
                         cx.emit(RepoEvent::Committed);
                     }
@@ -1207,6 +1229,86 @@ impl RepoState {
                 match result {
                     Ok(diff) => this.set_diff(diff),
                     Err(error) => cx.emit(RepoEvent::Error(error)),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// Has the chosen agent write a commit message for the staged changes.
+    /// It arrives as `RepoEvent::MessageWritten`.
+    pub fn write_message(&mut self, kind: AgentKind, custom: &str, cx: &mut Context<Self>) {
+        let argv = match agent::ask_command(kind, custom) {
+            Ok(argv) => argv,
+            Err(problem) => return cx.emit(RepoEvent::Notice(problem)),
+        };
+        let by = match kind {
+            AgentKind::Other => argv[0].clone(),
+            known => known.label().to_owned(),
+        };
+        self.ai.writing = true;
+        cx.notify();
+        let runner = self.runner.clone();
+        let asked = cx.background_spawn(async move {
+            let patch = read::staged_patch(&runner).map_err(|error| error.stderr)?;
+            if patch.is_empty() {
+                return Err(t!("ai.nothing_staged").into_owned());
+            }
+            agent::ask(
+                &argv,
+                &agent::message_prompt(&patch),
+                &AtomicBool::new(false),
+            )
+        });
+        self.ai_task = cx.spawn(async move |this, cx| {
+            let answer = asked.await;
+            let _ = this.update(cx, |this, cx| {
+                this.ai.writing = false;
+                match answer {
+                    Ok(message) => {
+                        this.ai.written_by = Some(by);
+                        cx.emit(RepoEvent::MessageWritten(message));
+                    }
+                    Err(problem) => cx.emit(RepoEvent::Notice(problem)),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// Has the chosen agent explain the selected commit.
+    pub fn explain_commit(&mut self, kind: AgentKind, custom: &str, cx: &mut Context<Self>) {
+        let Some(oid) = self.selection.oid.clone() else {
+            return;
+        };
+        let argv = match agent::ask_command(kind, custom) {
+            Ok(argv) => argv,
+            Err(problem) => return cx.emit(RepoEvent::Notice(problem)),
+        };
+        self.ai.explaining = Some(oid.clone());
+        cx.notify();
+        let runner = self.runner.clone();
+        let asked = cx.background_spawn({
+            let oid = oid.clone();
+            async move {
+                let patch = read::commit_patch(&runner, &oid).map_err(|error| error.stderr)?;
+                agent::ask(
+                    &argv,
+                    &agent::explain_prompt(&patch),
+                    &AtomicBool::new(false),
+                )
+            }
+        });
+        self.explain_task = cx.spawn(async move |this, cx| {
+            let answer = asked.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.ai.explaining.as_ref() != Some(&oid) {
+                    return;
+                }
+                this.ai.explaining = None;
+                match answer {
+                    Ok(text) => this.ai.explained = Some((oid, text)),
+                    Err(problem) => cx.emit(RepoEvent::Notice(problem)),
                 }
                 cx.notify();
             });

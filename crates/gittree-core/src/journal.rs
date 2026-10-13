@@ -4,7 +4,7 @@
 //! M3 writes entries for commits and discards and can undo those. Redo, the
 //! snapshot list and pruning come with M7.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -184,7 +184,7 @@ fn head_state(runner: &GitRunner) -> HeadState {
 /// A random version 4 UUID.
 fn new_id() -> std::io::Result<String> {
     let mut b = [0u8; 16];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut b)?;
+    getrandom::fill(&mut b).map_err(|error| std::io::Error::other(error.to_string()))?;
     b[6] = b[6] & 0x0f | 0x40;
     b[8] = b[8] & 0x3f | 0x80;
     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();

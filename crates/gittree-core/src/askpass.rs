@@ -132,7 +132,9 @@ pub fn ask(sock: &str, token: &str, question: &str) -> Option<String> {
     stream
         .write_all(format!("{token}\n{question}\n").as_bytes())
         .ok()?;
-    stream.shutdown(std::net::Shutdown::Write).ok()?;
+    // The listener reads two lines, so it may have answered and hung up
+    // already. macOS then fails this call, and the answer is still there.
+    let _ = stream.shutdown(std::net::Shutdown::Write);
     let mut reply = String::new();
     stream.read_to_string(&mut reply).ok()?;
     (!reply.is_empty()).then_some(reply)

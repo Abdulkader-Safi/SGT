@@ -58,3 +58,5 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 [dev-dependencies]
 gpui-kit = { version = "=0.7.3", features = ["test-support"] }
 tempfile = "3"
+# Already linked through gittree-core. The tests build MCP messages with it.
+serde_json = "1.0"

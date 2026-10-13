@@ -133,6 +133,8 @@ pub struct Settings {
     pub mcp_access: McpAccess,
     /// MCP tools switched off, by name.
     pub mcp_tools_off: Vec<String>,
+    /// Each change an agent asks for waits for a yes in the app.
+    pub mcp_ask: bool,
     /// The installed agent that writes commit messages and explains
     /// commits, and the command when it is `Other`.
     pub ai_agent: crate::agent::AgentKind,
@@ -167,6 +169,7 @@ impl Default for Settings {
             auto_fetch_minutes: 0,
             mcp_access: McpAccess::ReadOnly,
             mcp_tools_off: Vec::new(),
+            mcp_ask: false,
             ai_agent: crate::agent::AgentKind::Claude,
             ai_command: String::new(),
         }

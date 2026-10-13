@@ -4,7 +4,7 @@ mod common;
 
 use common::TestRepo;
 use gittree_core::journal::Journal;
-use gittree_core::mcp::Server;
+use gittree_core::mcp::{self, Outcome, Server};
 use gittree_core::store::McpAccess;
 use serde_json::{Value, json};
 
@@ -317,4 +317,75 @@ fn a_tool_switched_off_is_not_listed_and_cannot_be_called() {
         gittree_core::mcp::client_command("/Apps/Safi Git Tree.app/gittree".as_ref()),
         "claude mcp add sgt -- \"/Apps/Safi Git Tree.app/gittree\" mcp"
     );
+}
+
+#[test]
+fn calls_are_listed_and_a_change_waits_for_the_users_answer() {
+    use std::time::Duration;
+
+    let repo = repo_with_changes();
+    let common = repo.path().join(".git");
+    let add = json!({ "action": "add", "paths": ["a.txt"] });
+
+    // Nothing is written into a repository that is not trusted.
+    call(
+        &server(&repo, false, McpAccess::ReadOnly),
+        "git_status",
+        json!({}),
+    );
+    assert!(mcp::calls(&common).is_empty() && !common.join("gittree").exists());
+
+    // Nobody answers: the change is not made.
+    let asking = server(&repo, true, McpAccess::ReadWrite).asking(Duration::from_millis(300));
+    asking.handle(&json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize",
+        "params": { "clientInfo": { "name": "Test Client" } } }));
+    call(&asking, "git_status", json!({}));
+    let (text, failed) = call(&asking, "git_add_or_commit", add.clone());
+    assert!(failed && text.contains("did not allow"));
+    assert_eq!(
+        repo.git(1, &["status", "--porcelain"]),
+        " M a.txt\n?? new.txt"
+    );
+    assert!(mcp::requests(&common).is_empty());
+
+    // The app answers each request it finds: first no, then yes.
+    let asking = asking.asking(Duration::from_secs(20));
+    for allow in [false, true] {
+        let failed = std::thread::scope(|scope| {
+            let waiting = scope.spawn(|| call(&asking, "git_add_or_commit", add.clone()).1);
+            let request = loop {
+                if let Some(request) = mcp::requests(&common).pop() {
+                    break request;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            assert_eq!(request.client, "Test Client");
+            assert_eq!(request.tool, "git_add_or_commit");
+            assert_eq!(request.detail, "add a.txt");
+            mcp::answer(&common, &request.id, allow).unwrap();
+            waiting.join().unwrap()
+        });
+        assert_eq!(failed, !allow);
+    }
+    assert_eq!(
+        repo.git(1, &["status", "--porcelain"]),
+        "M  a.txt\n?? new.txt"
+    );
+    assert!(mcp::answer(&common, "../x", true).is_err());
+
+    let calls = mcp::calls(&common);
+    let listed: Vec<(&str, Outcome)> = calls
+        .iter()
+        .map(|call| (call.tool.as_str(), call.outcome))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("git_status", Outcome::Done),
+            ("git_add_or_commit", Outcome::Denied),
+            ("git_add_or_commit", Outcome::Denied),
+            ("git_add_or_commit", Outcome::Done),
+        ]
+    );
+    assert!(calls.iter().all(|call| call.client == "Test Client"));
 }

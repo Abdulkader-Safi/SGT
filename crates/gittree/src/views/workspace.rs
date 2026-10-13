@@ -543,6 +543,37 @@ impl Render for Workspace {
                     }),
             )
         });
+        // The oldest change an agent is waiting to make. The next one shows
+        // once this is answered.
+        let approval = repo.agent_requests.first().map(|request| {
+            let answer = |allow: bool| {
+                let id = request.id.clone();
+                cx.listener(move |this, _: &gpui_kit::ClickEvent, _, cx| {
+                    this.repo
+                        .update(cx, |repo, cx| repo.answer_agent(&id, allow, cx))
+                })
+            };
+            let text = t!(
+                "agents.wants",
+                client = &request.client,
+                tool = &request.tool,
+                detail = &request.detail
+            );
+            banner(BannerKind::Warning, "shield", text.into_owned(), p)
+                .child(
+                    Button::new("agent-deny")
+                        .small()
+                        .label(t!("agents.deny").into_owned())
+                        .on_click(answer(false)),
+                )
+                .child(
+                    Button::new("agent-allow")
+                        .small()
+                        .primary()
+                        .label(t!("agents.allow").into_owned())
+                        .on_click(answer(true)),
+                )
+        });
         // "Create branch here" joins this banner with the branch actions.
         let detached_banner = detached.then(|| {
             banner(
@@ -686,6 +717,7 @@ impl Render for Workspace {
             )
             .child(toolbar)
             .children(untrusted)
+            .children(approval)
             .children(progress)
             .children(detached_banner)
             .child(

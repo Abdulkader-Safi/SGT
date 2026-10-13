@@ -20,7 +20,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9 and M10 | Not started |
-| M11: MCP server | Step 1 built: the server and five tools. See below |
+| M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
 
@@ -315,11 +315,28 @@ Checked by tests: the protocol (initialize, notifications, unknown methods, one 
 - A tool that is switched off is not listed to agents and cannot be called. The server reads the switches when it starts, so a change applies to the next client session.
 - The AI helper choice stays on the first page.
 
-Not in it, against the design: the "Running, 2 clients" status, the on and off switch for the whole server, "Ask before each change", and commands for Cursor and VS Code. The first three need the server and the app to talk to each other. The MCP page itself has not been looked at on screen, and the test draws only the first page.
+Not in it, against the design: the "Running, 2 clients" status, the on and off switch for the whole server, and commands for Cursor and VS Code. The MCP page itself has not been looked at on screen, and the test draws only the first page.
 
-### Still to do
+### Step 4 (built): agent activity and "Ask before each change"
 
-- The agent activity panel and the approval banner. Both need the server and a running app to talk to each other, which they do not yet: today the server is its own process.
+The server is its own process, started by the client. It and the app meet in files in the repository's Git folder (`.git/gittree/`), so nothing listens on a socket or a port.
+
+- The server appends each tool call to `mcp-calls.jsonl`: time, client name (from the client's `initialize` message), tool, a few words on what it was about, and whether it was done, failed or denied. The app reads the last 200.
+- The list is in the Agents view, under the sessions, newest first.
+- "Ask before each change" is a switch on the MCP page. With it on, the server writes a request file before a change and waits up to two minutes for an answer file. The app shows a banner with Deny and Allow. No answer counts as no, so with the app closed an agent cannot change anything.
+- The request is asked after the trust and access checks, so the banner never offers something that would be refused anyway.
+- Nothing is written into an untrusted repository, so calls made there are not listed.
+- The app picks the files up with its status refresh, which the file watcher starts.
+
+Decisions and limits:
+
+- Files instead of a socket: no listener, the same code on all three systems, and it works when the app starts after the server.
+- The approval is a check for the user, not a wall. A program that runs as the user could write the answer file itself, as it could run `git` itself.
+- One banner at a time, oldest first.
+- Not built from the design: the client count, "Undo" on each row (the app's Undo covers the latest change), and a separate panel beside the graph.
+- A worktree whose Git folder is elsewhere is not watched, so there the list and banner update on the next refresh.
+
+Still needs a check by hand: Claude Code connected with "Ask before each change" on, asking for a commit, and the banner and list on screen.
 
 ## M4: branches, tags, stash
 

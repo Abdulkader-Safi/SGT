@@ -2049,6 +2049,7 @@ dependencies = [
  "libc",
  "notify",
  "rust-i18n",
+ "serde_json",
  "smol",
  "tempfile",
  "tracing",

@@ -2,6 +2,7 @@
 //! (FR-AGENT-04). Shown in place of the graph.
 
 use gittree_core::agent::{Session, SessionState};
+use gittree_core::mcp::Outcome;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Sizable, h_flex, v_flex};
@@ -200,7 +201,69 @@ impl Render for AgentsView {
                         }),
                 )
             });
-        let body = if repo.sessions.is_empty() {
+        let calls = &repo.agent_calls;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let font = mono(cx);
+        let call_rows = calls.iter().rev().map(|call| {
+            let when = match now.saturating_sub(call.time) / 60 {
+                0 => t!("agents.call_now").into_owned(),
+                minutes @ 1..60 => t!("agents.call_minutes", count = minutes).into_owned(),
+                minutes => t!("agents.call_hours", count = minutes / 60).into_owned(),
+            };
+            let outcome = match call.outcome {
+                Outcome::Done => None,
+                Outcome::Denied => Some(t!("agents.call_denied")),
+                Outcome::Failed => Some(t!("agents.call_failed")),
+            };
+            h_flex()
+                .gap_3()
+                .h(px(28.))
+                .text_size(px(12.))
+                .child(
+                    div()
+                        .flex_none()
+                        .font_family(font.clone())
+                        .child(call.tool.clone()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .text_color(p.text_secondary)
+                        .child(call.detail.clone()),
+                )
+                .children(outcome.map(|text| {
+                    div()
+                        .flex_none()
+                        .text_color(p.danger)
+                        .child(text.into_owned())
+                }))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(p.text_tertiary)
+                        .child(format!("{} · {when}", call.client)),
+                )
+        });
+        let activity = (!calls.is_empty()).then(|| {
+            v_flex()
+                .child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(t!("agents.activity").into_owned()),
+                )
+                .child(
+                    div()
+                        .pb_2()
+                        .text_size(px(12.))
+                        .text_color(p.text_tertiary)
+                        .child(t!("agents.activity_hint").into_owned()),
+                )
+                .children(call_rows)
+        });
+        let body = if repo.sessions.is_empty() && calls.is_empty() {
             empty_state(
                 "branch",
                 t!("agents.empty_title").into_owned(),
@@ -219,6 +282,7 @@ impl Render for AgentsView {
                     let on_base = head == Some(session.base.as_str());
                     self.card(ix, session, on_base, p, cx)
                 }))
+                .children(activity)
                 .overflow_y_scrollbar()
                 .into_any_element()
         };

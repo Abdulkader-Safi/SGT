@@ -21,9 +21,12 @@ fn serve_mcp(folder: Option<std::ffi::OsString>) -> Result<(), String> {
     let git = setup::find_git(custom.as_deref()).map_err(|error| error.to_string())?;
     let repository = setup::open(&git.path, &folder, &trust).map_err(|error| error.to_string())?;
     let runner = gittree_core::GitRunner::new(&git.path, &repository.path, repository.trusted);
-    let server =
+    let mut server =
         gittree_core::mcp::Server::new(runner, &repository.common_dir, settings.mcp_access)
             .without(settings.mcp_tools_off.clone());
+    if settings.mcp_ask {
+        server = server.asking(gittree_core::mcp::ASK_WAIT);
+    }
     server
         .serve(std::io::stdin().lock(), std::io::stdout().lock())
         .map_err(|error| error.to_string())

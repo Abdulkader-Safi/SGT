@@ -8,6 +8,7 @@ use gittree_core::agent::{self, AgentKind, PlannedCommit, Session, SessionState}
 use gittree_core::graph::{GraphLayout, GraphRow};
 use gittree_core::hosting::{self, Gh};
 use gittree_core::journal::{Action, Blocked, Journal};
+use gittree_core::mcp;
 use gittree_core::model::{
     Change, Commit, CommitDetails, FileChange, FileDiff, Head, Oid, Ref, RepoPath, Repository,
     StatusEntry,
@@ -443,6 +444,11 @@ pub struct RepoState {
     explain_task: Task<()>,
     /// Agent sessions, oldest first. Saved in the repository's own folder.
     pub sessions: Vec<Session>,
+    /// The calls agents made through the MCP server, oldest first, and
+    /// the changes waiting for a yes or no (FR-AGENT-02).
+    pub agent_calls: Vec<mcp::Call>,
+    pub agent_requests: Vec<mcp::Request>,
+    agent_task: Task<()>,
     pub centre: Centre,
     pub launchpad: LaunchpadState,
     launchpad_task: Task<()>,
@@ -543,6 +549,9 @@ impl RepoState {
             ai_task: Task::ready(()),
             explain_task: Task::ready(()),
             sessions: Vec::new(),
+            agent_calls: Vec::new(),
+            agent_requests: Vec::new(),
+            agent_task: Task::ready(()),
             centre: Centre::Graph,
             launchpad: LaunchpadState::default(),
             launchpad_task: Task::ready(()),
@@ -592,6 +601,7 @@ impl RepoState {
     /// Reads the changed files. A failure is logged and otherwise silent:
     /// the next trigger tries again.
     fn refresh_status(&mut self, cx: &mut Context<Self>) {
+        self.load_agent_calls(cx);
         let runner = self.runner.clone();
         self.status_task = cx.spawn(async move |this, cx| {
             let mut result = Err(None);
@@ -1555,6 +1565,41 @@ impl RepoState {
             },
             cx,
         );
+    }
+
+    /// Reads what the MCP server left for the app: the calls agents made
+    /// and the changes waiting for an answer. The server is another
+    /// process, so the two meet in files in the repository's Git folder.
+    // ponytail: read with every status refresh, which the file watcher
+    // starts. A worktree's shared Git folder is outside the watched
+    // folder, so there it shows on the next refresh.
+    pub fn load_agent_calls(&mut self, cx: &mut Context<Self>) {
+        let common_dir = self.repository.common_dir.clone();
+        let read = cx
+            .background_spawn(async move { (mcp::calls(&common_dir), mcp::requests(&common_dir)) });
+        self.agent_task = cx.spawn(async move |this, cx| {
+            let (calls, requests) = read.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.agent_calls != calls || this.agent_requests != requests {
+                    this.agent_calls = calls;
+                    this.agent_requests = requests;
+                    cx.notify();
+                }
+            });
+        });
+    }
+
+    /// Allows or denies a change an agent is waiting to make.
+    pub fn answer_agent(&mut self, id: &str, allow: bool, cx: &mut Context<Self>) {
+        self.agent_requests.retain(|request| request.id != id);
+        cx.notify();
+        let (common_dir, id) = (self.repository.common_dir.clone(), id.to_owned());
+        cx.background_spawn(async move {
+            if let Err(error) = mcp::answer(&common_dir, &id, allow) {
+                tracing::warn!(%error, "the agent was not waiting for the answer any more");
+            }
+        })
+        .detach();
     }
 
     fn save_sessions(&self) {

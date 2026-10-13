@@ -228,6 +228,16 @@ impl Render for SettingsView {
             )
             .item(
                 SettingItem::new(
+                    label("settings.mcp_ask"),
+                    SettingField::switch(
+                        |cx| read(cx, |s| s.mcp_ask),
+                        |on, cx| write(cx, |s| s.mcp_ask = on),
+                    ),
+                )
+                .description(label("settings.mcp_ask_help")),
+            )
+            .item(
+                SettingItem::new(
                     label("settings.mcp_connect"),
                     SettingField::render(|_, _, cx| {
                         let p = crate::palette::palette(cx);

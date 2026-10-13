@@ -1190,8 +1190,22 @@ fn an_agent_plans_commits_and_the_plan_is_applied(cx: &mut TestAppContext) {
     // The composer opened with the plan, and Cancel commits nothing.
     shell.in_window(cx, |window, cx| window.click("cancel", cx));
 
+    // Any Git error while the plan is applied fails the test by name.
+    let errors = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _watch = cx.update(|cx| {
+        let errors = errors.clone();
+        cx.subscribe(
+            &repo,
+            move |_, event: &gittree::repo_state::RepoEvent, _| {
+                if let gittree::repo_state::RepoEvent::Error(error) = event {
+                    errors.borrow_mut().push(format!("{error:?}"));
+                }
+            },
+        )
+    });
     cx.update(|cx| repo.update(cx, |repo, cx| repo.apply_plan(plan, cx)));
     wait(cx, &|repo| !repo.busy);
+    assert_eq!(*errors.borrow(), Vec::<String>::new());
     assert_eq!(
         log("--format=%s"),
         "Add run\n\nb.rs\nCall run\n\na.rs\nbase\n\na.rs\n"
@@ -1205,6 +1219,80 @@ fn an_agent_plans_commits_and_the_plan_is_applied(cx: &mut TestAppContext) {
     let journal = gittree_core::journal::Journal::new(&dir.path().join(".git"));
     let labels: Vec<String> = journal.entries().into_iter().map(|e| e.label).collect();
     assert_eq!(labels, ["Commit \"Call run\"", "Commit \"Add run\""]);
+}
+
+/// FR-AGENT-02: a change an agent asks for through the MCP server waits
+/// for the banner's Allow, and the call is listed afterwards.
+#[gpui_kit::test]
+fn an_agents_change_waits_for_allow_and_is_listed(cx: &mut TestAppContext) {
+    use gittree_core::mcp::{self, Outcome, Server};
+    use gittree_core::store::McpAccess;
+    use serde_json::json;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() {}\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() { run() }\n").unwrap();
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    let (runner, common) = cx.update(|cx| {
+        let repo = repo.read(cx);
+        (repo.runner.clone(), repo.repository.common_dir.clone())
+    });
+    // The server is its own process in real use. Here it is a thread.
+    let server = Server::new(runner, &common, McpAccess::ReadWrite)
+        .asking(std::time::Duration::from_secs(20));
+    let agent = std::thread::spawn(move || {
+        let reply = server
+            .handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": { "name": "git_add_or_commit",
+                    "arguments": { "action": "add", "paths": ["a.rs"] } } }))
+            .unwrap();
+        reply["result"]["isError"].as_bool().unwrap()
+    });
+    let wait = |cx: &mut TestAppContext, done: &dyn Fn(&gittree::repo_state::RepoState) -> bool| {
+        for _ in 0..400 {
+            cx.update(|cx| repo.update(cx, |repo, cx| repo.load_agent_calls(cx)));
+            cx.run_until_parked();
+            if cx.update(|cx| done(repo.read(cx))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("timed out");
+    };
+
+    wait(cx, &|repo| !repo.agent_requests.is_empty());
+    cx.update(|cx| assert_eq!(repo.read(cx).agent_requests[0].detail, "add a.rs"));
+    shell.in_window(cx, |window, cx| window.click("agent-allow", cx));
+    assert!(!agent.join().unwrap(), "the change went through");
+    wait(cx, &|repo| !repo.agent_calls.is_empty());
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        assert!(repo.agent_requests.is_empty());
+        assert_eq!(repo.agent_calls[0].tool, "git_add_or_commit");
+        assert_eq!(repo.agent_calls[0].outcome, Outcome::Done);
+    });
+    assert!(mcp::requests(&common).is_empty());
+    let status = Command::new("git")
+        .current_dir(dir.path())
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(status.stdout).unwrap(), "M  a.rs\n");
+    // The list draws in the agents view.
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.show_centre(gittree::repo_state::Centre::Agents, cx)
+        })
+    });
+    shell.in_window(cx, |_, _| ());
 }
 
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new

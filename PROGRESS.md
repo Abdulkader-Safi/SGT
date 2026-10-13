@@ -4,7 +4,7 @@ Milestone status, decisions, and deviations from `docs/spec/06-build-spec.md`.
 
 ## Name
 
-Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). The window title, menus, messages, the data folder (`~/Library/Application Support/Safi Git Tree`) and the log folder (`~/Library/Logs/Safi Git Tree`) use the new name. Internal identifiers keep the old spelling: the crates, the `gittree` binary, the `GITTREE_*` environment variables, `refs/gittree/` and `.git/gittree/`. The folder on disk and the GitHub repository (`git-tree`) are unchanged.
+Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). The window title, menus, messages, the data folder (`~/Library/Application Support/Safi Git Tree`) and the log folder (`~/Library/Logs/Safi Git Tree`) use the new name. Internal identifiers keep the old spelling: the crates, the `gittree` binary, the `GITTREE_*` environment variables, `refs/gittree/` and `.git/gittree/`. The folder on disk is unchanged. The GitHub repository was renamed from `git-tree` to `SGT`.
 
 ## Status
 

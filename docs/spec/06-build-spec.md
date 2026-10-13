@@ -86,7 +86,7 @@ Safi Git Tree (SGT) is a native desktop Git client for macOS, written in Rust an
 ## 4. Repository structure
 
 ```
-git-tree/
+SGT/
   Cargo.toml                 workspace: members crates/*
   Cargo.lock                 committed
   rust-toolchain.toml        1.97.1
@@ -513,7 +513,7 @@ Repositories that use worktrees, submodules or LFS must still open and behave co
 - At the end of each milestone, run the tests and tick the acceptance boxes it covers. Don't move on with a failing box.
 - Don't add features outside this spec. If something seems missing, note it in `PROGRESS.md` and ask.
 - If a spec decision turns out to be wrong in practice, stop. Explain why. Don't silently swap a stack choice.
-- Commit after each step (each finished task within a milestone), with a message naming the milestone and the step. Push to `origin` (`https://github.com/Abdulkader-Safi/git-tree.git`, branch `main`) only when the GitHub CI needs to run, not after every commit.
+- Commit after each step (each finished task within a milestone), with a message naming the milestone and the step. Push to `origin` (`https://github.com/Abdulkader-Safi/SGT.git`, branch `main`) only when the GitHub CI needs to run, not after every commit.
 - Keep secrets out of the repo. There are none in v1; the environment variables are `GITTREE_GIT`, `GITTREE_DATA_DIR`, `GITTREE_LOG`, and the two askpass variables the app sets for itself.
 - GPUI Kit's API moves fast. Before using a component, read its docs for 0.7.3 on docs.rs instead of relying on memory, and prefer a kit component over a hand-built one when it exists.
 - Tests that touch Git run with `HOME` and `GIT_CONFIG_GLOBAL` pointed at a temporary folder, so they never read or write the developer's real config.

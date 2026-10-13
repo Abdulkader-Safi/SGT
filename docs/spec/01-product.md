@@ -52,7 +52,7 @@ Desktop Git GUI client. It competes with Fork and Sublime Merge on speed, with G
 
 ## Business model and licence
 
-Free. Source published on GitHub at https://github.com/Abdulkader-Safi/git-tree under Apache-2.0, the same licence as GPUI and GPUI Kit, so there is one licence to reason about. No paid tier is planned for v1. If one ever appears it would cover hosted features (review, sync), never the local client.
+Free. Source published on GitHub at https://github.com/Abdulkader-Safi/SGT under Apache-2.0, the same licence as GPUI and GPUI Kit, so there is one licence to reason about. No paid tier is planned for v1. If one ever appears it would cover hosted features (review, sync), never the local client.
 
 ## Platforms
 

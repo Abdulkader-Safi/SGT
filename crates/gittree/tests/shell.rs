@@ -995,7 +995,7 @@ fn an_agent_session_runs_in_its_own_worktree(cx: &mut TestAppContext) {
             (session.state, session.note.as_str(), session.base.as_str()),
             (SessionState::Done, "all done", "main")
         );
-        assert!(repo.show_agents);
+        assert_eq!(repo.centre, gittree::repo_state::Centre::Agents);
         // The app made the worktree, so it is on the trust list.
         assert!(shell.app.read(cx).trust.contains(&worktree));
     });
@@ -1107,4 +1107,104 @@ fn an_agent_writes_a_message_and_explains_a_commit(cx: &mut TestAppContext) {
             .unwrap()
             .starts_with("Explain what the commit")
     );
+}
+
+/// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
+/// pull request is opened after the branch is pushed. A stand-in script
+/// plays `gh`.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn the_launchpad_reads_and_creates_pull_requests_through_gh(cx: &mut TestAppContext) {
+    use gittree::repo_state::Centre;
+    use std::os::unix::fs::PermissionsExt;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    isolate_git();
+    let origin = outside.path().join("origin.git");
+    git(
+        outside.path(),
+        &["init", "-q", "--bare", "-b", "main", "origin.git"],
+    );
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() {}\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    git(
+        dir.path(),
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(dir.path(), &["push", "-q", "-u", "origin", "main"]);
+    git(dir.path(), &["switch", "-q", "-c", "keys"]);
+    std::fs::write(dir.path().join("a.rs"), "fn main() { keys() }\n").unwrap();
+    git(dir.path(), &["commit", "-q", "-am", "Add keys"]);
+    let asked = outside.path().join("asked.txt");
+    let script = outside.path().join("gh");
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  "api user") echo ada ;;
+  "repo view") echo main ;;
+  "pr list") echo '[{{"number":3,"title":"One","author":{{"login":"grace"}},"isDraft":true,"statusCheckRollup":[]}}]' ;;
+  "issue list") echo '[]' ;;
+  "pr create") printf '%s\n' "$@" > '{}'; echo "https://example.com/pull/4" ;;
+  *) exit 1 ;;
+esac
+"#,
+            asked.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // SAFETY: only this test reads the variable.
+    unsafe { std::env::set_var("GITTREE_GH", &script) };
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    let wait = |cx: &mut TestAppContext, done: &dyn Fn(&gittree::repo_state::RepoState) -> bool| {
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if cx.update(|cx| done(repo.read(cx))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("timed out");
+    };
+
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.show_centre(Centre::Launchpad, cx)));
+    wait(cx, &|repo| !repo.launchpad.loading);
+    shell.in_window(cx, |_, _| ());
+    cx.update(|cx| {
+        let repo = repo.read(cx);
+        assert_eq!(repo.launchpad.error, None);
+        let found = repo.launchpad.data.as_ref().unwrap();
+        assert_eq!((found.login.as_str(), found.mine[0].number), ("ada", 3));
+        assert_eq!(
+            repo.pull_request_branches(),
+            Some(("keys".to_owned(), "main".to_owned()))
+        );
+    });
+
+    cx.update(|cx| {
+        repo.update(cx, |repo, cx| {
+            repo.create_pull_request("Add keys".into(), "Why.".into(), false, cx)
+        })
+    });
+    wait(cx, &|repo| !repo.busy && asked.exists());
+    assert_eq!(
+        std::fs::read_to_string(&asked).unwrap(),
+        "pr\ncreate\n--head=keys\n--base=main\n--title=Add keys\n--body=Why.\n"
+    );
+    // The branch reached the remote before gh was asked.
+    let pushed = Command::new("git")
+        .current_dir(&origin)
+        .args(["rev-parse", "--verify", "-q", "refs/heads/keys"])
+        .output()
+        .unwrap();
+    assert!(pushed.status.success());
 }

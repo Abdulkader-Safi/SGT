@@ -2,7 +2,7 @@
 
 A native Git client for macOS, Windows and Linux, written in Rust and drawn with GPUI. It shows the commit graph, branches, commit details and diffs. Every Git action is done by the `git` already installed on your machine, so the app always agrees with the command line.
 
-There is no account, no server and no telemetry. The only network use is Git's own.
+There is no account, no server and no telemetry. The app's own network use is Git's. Three optional features run programs you have installed, which use the network under your own sign-in: agent sessions and AI helpers run a command-line agent, and the Launchpad runs `gh`.
 
 ## Status
 
@@ -26,7 +26,7 @@ Early development. What works today:
 - The view updates by itself when the repository changes on disk.
 - Settings, light and dark themes, and the window layout restored at launch.
 
-Not built yet: blame and file history, worktrees and agent sessions, AI helpers, pull requests. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
+Not built yet: installers for Windows and Linux, interactive rebase, tabs. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
 
 ## Requirements
 
@@ -74,7 +74,7 @@ A repository that SGT did not create is opened read-only until you press "Trust 
 
 It never writes your global Git config, `~/.ssh` or a credential store.
 
-Environment variables: `GITTREE_GIT` (path to the Git program), `GITTREE_DATA_DIR` (a different data folder), `GITTREE_LOG` (`error`, `warn`, `info` or `debug`).
+Environment variables: `GITTREE_GIT` (path to the Git program), `GITTREE_GH` (path to the GitHub CLI), `GITTREE_DATA_DIR` (a different data folder), `GITTREE_LOG` (`error`, `warn`, `info` or `debug`).
 
 ## Layout
 

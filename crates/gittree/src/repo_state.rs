@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use gittree_core::agent::{self, AgentKind, Session, SessionState};
 use gittree_core::graph::{GraphLayout, GraphRow};
+use gittree_core::hosting::{self, Gh};
 use gittree_core::journal::{Action, Blocked, Journal};
 use gittree_core::model::{
     Change, Commit, CommitDetails, FileChange, FileDiff, Head, Oid, Ref, RepoPath, Repository,
@@ -173,6 +174,14 @@ pub enum Op {
         branch: String,
     },
     RemoveWorktree(std::path::PathBuf),
+    /// Opens a pull request through `gh`. The branch is pushed before it.
+    CreatePullRequest {
+        head: String,
+        base: String,
+        title: String,
+        body: String,
+        draft: bool,
+    },
     /// Takes back the last undoable action.
     Undo,
     /// Runs the last undone action again.
@@ -266,6 +275,8 @@ enum Done {
     Notice(String),
     /// The worktree of the waiting session exists.
     SessionReady,
+    /// A pull request was opened at this address.
+    PullRequest(String),
     WorktreeRemoved(std::path::PathBuf),
 }
 
@@ -316,6 +327,32 @@ pub struct Selection {
     /// progress. It is swapped for a new `Arc` only when it changes.
     pub diff: Option<Arc<FileDiff>>,
     pub diff_loading: bool,
+}
+
+/// What shows between the sidebar and the details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Centre {
+    #[default]
+    Graph,
+    Agents,
+    Launchpad,
+}
+
+/// Pull requests and issues, as last read through `gh` (FR-AGENT-06).
+#[derive(Default)]
+pub struct LaunchpadState {
+    pub loading: bool,
+    pub error: Option<String>,
+    pub data: Option<hosting::Launchpad>,
+    /// The Issues tab shows, not Pull requests.
+    pub issues_tab: bool,
+}
+
+/// `gh` for this repository. `GITTREE_GH` names another program, which the
+/// tests use.
+fn gh_for(runner: &GitRunner) -> Gh {
+    let program = std::env::var_os("GITTREE_GH").map(Into::into);
+    Gh::new(program, runner.dir(), runner.trusted())
 }
 
 /// What the AI helpers are doing and what they last wrote (FR-AGENT-05).
@@ -388,8 +425,9 @@ pub struct RepoState {
     explain_task: Task<()>,
     /// Agent sessions, oldest first. Saved in the repository's own folder.
     pub sessions: Vec<Session>,
-    /// The sessions view shows in place of the graph.
-    pub show_agents: bool,
+    pub centre: Centre,
+    pub launchpad: LaunchpadState,
+    launchpad_task: Task<()>,
     /// The command and session that start once their worktree exists.
     pending_session: Option<(Vec<String>, Session)>,
     /// Each running agent, by its branch, with the flag that stops it.
@@ -487,7 +525,9 @@ impl RepoState {
             ai_task: Task::ready(()),
             explain_task: Task::ready(()),
             sessions: Vec::new(),
-            show_agents: false,
+            centre: Centre::Graph,
+            launchpad: LaunchpadState::default(),
+            launchpad_task: Task::ready(()),
             pending_session: None,
             agents: Vec::new(),
         };
@@ -781,6 +821,12 @@ impl RepoState {
                     }
                     Ok(Done::Notice(text)) => cx.emit(RepoEvent::Notice(text)),
                     Ok(Done::SessionReady) => this.session_ready(cx),
+                    Ok(Done::PullRequest(url)) => {
+                        cx.emit(RepoEvent::Notice(
+                            t!("launchpad.created", url = &url).into_owned(),
+                        ));
+                        this.load_launchpad(cx);
+                    }
                     Ok(Done::WorktreeRemoved(path)) => {
                         this.sessions.retain(|session| session.path != path);
                         this.save_sessions();
@@ -1315,9 +1361,78 @@ impl RepoState {
         });
     }
 
-    pub fn toggle_agents(&mut self, cx: &mut Context<Self>) {
-        self.show_agents = !self.show_agents;
+    /// Shows a view in the centre, or the graph again when it already
+    /// shows. The Launchpad is read the first time it opens.
+    pub fn show_centre(&mut self, centre: Centre, cx: &mut Context<Self>) {
+        self.centre = if self.centre == centre {
+            Centre::Graph
+        } else {
+            centre
+        };
         cx.notify();
+        if self.centre == Centre::Launchpad && self.launchpad.data.is_none() {
+            self.load_launchpad(cx);
+        }
+    }
+
+    /// Reads the pull requests and issues again.
+    pub fn load_launchpad(&mut self, cx: &mut Context<Self>) {
+        self.launchpad.loading = true;
+        self.launchpad.error = None;
+        cx.notify();
+        let gh = gh_for(&self.runner);
+        let read = cx.background_spawn(async move { gh.launchpad() });
+        self.launchpad_task = cx.spawn(async move |this, cx| {
+            let result = read.await;
+            let _ = this.update(cx, |this, cx| {
+                this.launchpad.loading = false;
+                match result {
+                    Ok(data) => this.launchpad.data = Some(data),
+                    Err(problem) => this.launchpad.error = Some(problem),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// The current branch and the branch a pull request from it goes into.
+    pub fn pull_request_branches(&self) -> Option<(String, String)> {
+        let Head::Branch(head) = &self.repository.head else {
+            return None;
+        };
+        let base = self
+            .launchpad
+            .data
+            .as_ref()
+            .map(|data| data.default_branch.clone())
+            .filter(|base| !base.is_empty())
+            .unwrap_or_else(|| "main".into());
+        (*head != base).then(|| (head.clone(), base))
+    }
+
+    /// Pushes the current branch, then opens a pull request from it.
+    pub fn create_pull_request(
+        &mut self,
+        title: String,
+        body: String,
+        draft: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((head, base)) = self.pull_request_branches() else {
+            return;
+        };
+        // The remote needs the branch and its newest commits first.
+        self.run_op(Op::Push { force: false }, cx);
+        self.run_op(
+            Op::CreatePullRequest {
+                head,
+                base,
+                title,
+                body,
+                draft,
+            },
+            cx,
+        );
     }
 
     fn save_sessions(&self) {
@@ -1360,7 +1475,7 @@ impl RepoState {
             note: String::new(),
         };
         self.pending_session = Some((argv, session));
-        self.show_agents = true;
+        self.centre = Centre::Agents;
         self.run_op(Op::StartSession { path, branch }, cx);
     }
 
@@ -1719,6 +1834,7 @@ fn op_label(op: &Op) -> String {
         | Op::RemoveRemote(_)
         | Op::StartSession { .. }
         | Op::RemoveWorktree(_)
+        | Op::CreatePullRequest { .. }
         | Op::Redo
         | Op::RestoreSnapshot { .. } => String::new(),
     }
@@ -2057,6 +2173,21 @@ fn execute(
         Op::RemoveWorktree(path) => {
             worktree::remove(runner, &path).map(|()| Done::WorktreeRemoved(path))
         }
+        Op::CreatePullRequest {
+            head,
+            base,
+            title,
+            body,
+            draft,
+        } => gh_for(runner)
+            .create_pull_request(&head, &base, &title, &body, draft)
+            .map(Done::PullRequest)
+            .map_err(|problem| GitError {
+                kind: GitErrorKind::Other,
+                args: vec!["gh".into(), "pr".into(), "create".into()],
+                exit_code: None,
+                stderr: problem,
+            }),
         Op::Undo => {
             let entries = journal.entries();
             let Some(entry) = entries.iter().rev().find(|entry| !entry.undone) else {

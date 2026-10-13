@@ -7,6 +7,7 @@ pub mod file_view;
 pub mod git_check;
 pub mod graph;
 pub mod graph_element;
+pub mod launchpad;
 pub mod palette;
 pub mod root;
 pub mod settings;

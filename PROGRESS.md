@@ -22,7 +22,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M9 and M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
-| M13: AI helpers and Launchpad | Commit messages and commit explanations built, 157 tests pass. Conflict suggestions, the commit composer and Launchpad not started |
+| M13: AI helpers and Launchpad | Commit messages, commit explanations and Launchpad built, 161 tests pass. Conflict suggestions and the commit composer not started |
 
 ## M0: de-risk
 
@@ -545,7 +545,22 @@ Each may edit files in its worktree without asking, and nothing wider. None can 
 - The explanation is kept for one commit at a time and is not saved.
 - Codex and Gemini were not run for real.
 
+### Launchpad (built)
+
+- `hosting::Gh` runs the installed `gh` with an argument vector, in the repository, and only when it is trusted: `gh` runs Git with the repository's own config. The app holds no token.
+- "Launchpad" in the toolbar shows, in place of the graph, the open pull requests waiting on the user's review and the user's own, grouped as in the design: needs your review, waiting on reviewers, needs work, drafts. The Issues tab lists open issues assigned to the user. A row opens its page in the browser.
+- "Create pull request" shows when the current branch is not the default one. It asks for a title (the newest commit's summary to start with), a description and whether it is a draft. The branch is pushed first, then `gh pr create` runs, both through the op queue.
+- `GITTREE_GH` names another program in place of `gh`, which the tests use.
+- Tests: the JSON readers, a stand-in `gh` in the core crate, and `the_launchpad_reads_and_creates_pull_requests_through_gh` through the app. The read queries were also run once with the real `gh` in this repository on 2026-10-13. No real pull request was created.
+
+### Launchpad: differences from the design
+
+- Rows show the date of the last update, not "2 hours ago".
+- There is no count of approvals ("1 of 2").
+- "Write from commits" in the create dialog is not built.
+- The list is read when the Launchpad first opens and on Refresh. It does not update on its own.
+- Only GitHub, since `gh` is the only command it knows.
+
 ### Not started
 
 - Conflict suggestions and the commit composer.
-- Launchpad: pull requests and issues through `gh`, and creating a pull request.

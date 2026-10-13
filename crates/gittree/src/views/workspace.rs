@@ -20,12 +20,14 @@ use super::conflict::ConflictView;
 use super::dialogs;
 use super::file_view::FileViewPanel;
 use super::graph::GraphView;
+use super::launchpad::LaunchpadView;
 use super::sidebar::Sidebar;
 use super::staging::StagingView;
 use super::ui::{BannerKind, badge, banner, ic};
 use crate::actions::{Commit, FocusChanges, FocusGraph, Refresh, SearchCommits, TrustRepository};
 use crate::app_state::AppState;
 use crate::palette::palette;
+use crate::repo_state::Centre;
 use crate::repo_state::{Op, RepoEvent};
 use crate::repo_state::{RepoState, Scope};
 use gpui_kit::component::input::{Redo, Undo};
@@ -42,6 +44,7 @@ pub struct Workspace {
     graph: Entity<GraphView>,
     detail: Entity<CommitDetail>,
     agents: Entity<AgentsView>,
+    launchpad: Entity<LaunchpadView>,
     file_view: Entity<FileViewPanel>,
     staging: Entity<StagingView>,
     conflict: Entity<ConflictView>,
@@ -118,6 +121,7 @@ impl Workspace {
             sidebar: cx.new(|cx| Sidebar::new(repo.clone(), window, cx)),
             detail: cx.new(|cx| CommitDetail::new(repo.clone(), cx)),
             agents: cx.new(|cx| AgentsView::new(repo.clone(), cx)),
+            launchpad: cx.new(|cx| LaunchpadView::new(repo.clone(), cx)),
             file_view: cx.new(|cx| FileViewPanel::new(repo.clone(), cx)),
             staging: cx.new(|cx| StagingView::new(app.clone(), repo.clone(), window, cx)),
             conflict: cx.new(|cx| ConflictView::new(repo.clone(), window, cx)),
@@ -462,13 +466,33 @@ impl Render for Workspace {
                     Some(t!("agents.toolbar").into_owned()),
                     (working > 0).then(|| working.to_string()),
                 )
-                .when(repo.show_agents, |button| button.bg(p.bg_selected))
+                .when(repo.centre == Centre::Agents, |button| {
+                    button.bg(p.bg_selected)
+                })
                 .cursor_pointer()
                 .hover(|style| style.bg(p.bg_hover))
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.repo.update(cx, |repo, cx| repo.toggle_agents(cx))
+                    this.repo
+                        .update(cx, |repo, cx| repo.show_centre(Centre::Agents, cx))
                 }))
             })
+            .child(
+                tool(
+                    "launchpad",
+                    "remote",
+                    Some(t!("launchpad.title").into_owned()),
+                    None,
+                )
+                .when(repo.centre == Centre::Launchpad, |button| {
+                    button.bg(p.bg_selected)
+                })
+                .cursor_pointer()
+                .hover(|style| style.bg(p.bg_hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.repo
+                        .update(cx, |repo, cx| repo.show_centre(Centre::Launchpad, cx))
+                })),
+            )
             .child(div().flex_1())
             .children(running)
             .when(repo.busy && !repo.net_running, |toolbar| {
@@ -577,10 +601,10 @@ impl Render for Workspace {
                 )
         });
 
-        let centre = if repo.show_agents {
-            self.agents.clone().into_any_element()
-        } else {
-            self.graph.clone().into_any_element()
+        let centre = match repo.centre {
+            Centre::Graph => self.graph.clone().into_any_element(),
+            Centre::Agents => self.agents.clone().into_any_element(),
+            Centre::Launchpad => self.launchpad.clone().into_any_element(),
         };
         let right = if repo.resolving && repo.selection.wip {
             self.conflict.clone().into_any_element()

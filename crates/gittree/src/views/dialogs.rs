@@ -1349,3 +1349,73 @@ pub fn start_session(repo: Entity<RepoState>, window: &mut Window, cx: &mut App)
         cx,
     );
 }
+
+/// "Create pull request" from the current branch into the default one.
+pub fn create_pull_request(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
+    let Some((head, base)) = repo.read(cx).pull_request_branches() else {
+        return;
+    };
+    // The newest commit's summary is the usual title.
+    let summary = repo
+        .read(cx)
+        .history
+        .commits
+        .first()
+        .map(|commit| commit.summary.to_string())
+        .unwrap_or_default();
+    let title = text_input(&summary, String::new(), window, cx);
+    let body = cx.new(|cx| TextareaState::new(window, cx).auto_grow(4, 10));
+    let draft = cx.new(|_| false);
+    let shown = (title.clone(), body.clone(), draft.clone());
+    form(
+        t!("launchpad.create").into_owned(),
+        None,
+        t!("launchpad.create").into_owned(),
+        Some(title.clone()),
+        move |_, cx| {
+            let p = palette(cx);
+            let (title, body, draft) = &shown;
+            v_flex()
+                .gap(px(14.))
+                .child(flow(&head, &base, p))
+                .child(field(
+                    t!("launchpad.pr_title").into_owned(),
+                    Input::new(title).id("pr-title").small(),
+                    None,
+                    p,
+                ))
+                .child(field(
+                    t!("launchpad.pr_body").into_owned(),
+                    Textarea::new(body).small(),
+                    None,
+                    p,
+                ))
+                .child(toggle(
+                    "pr-draft",
+                    t!("launchpad.pr_draft").into_owned(),
+                    draft,
+                    cx,
+                ))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(p.text_tertiary)
+                        .child(t!("launchpad.pr_note").into_owned()),
+                )
+                .into_any_element()
+        },
+        move |_, cx| {
+            let name = title.read(cx).value().trim().to_owned();
+            if name.is_empty() {
+                return false;
+            }
+            let (text, as_draft) = (body.read(cx).value().to_string(), *draft.read(cx));
+            repo.update(cx, |repo, cx| {
+                repo.create_pull_request(name, text, as_draft, cx)
+            });
+            true
+        },
+        window,
+        cx,
+    );
+}

@@ -124,6 +124,10 @@ No acceptance box is ticked yet, because these were not exercised in a real wind
 - The app no longer starts `git log` before the UI, because it must find Git and open the repository first. M2 should measure this again.
 - A bare repository does not open. Git's own error is shown.
 
-### Open question for M2: untrusted repositories and filters
+### Filters in untrusted repositories: confirmed and fixed (2026-10-13)
 
-The four overrides the spec lists (`core.hooksPath`, `core.fsmonitor`, `core.sshCommand`, `credential.helper`) do not cover every program a repository's own `.git/config` can name. `filter.<name>.clean` and `filter.<name>.smudge` can run during `git status` and `git diff`, and `diff.<name>.textconv` is covered only by `--no-textconv` on diff calls. M1 runs only `rev-parse`, `symbolic-ref` and `log`, so nothing is exposed today. Before M2 adds `status` and `diff`, this needs a decision, for example reading the repository's config and overriding every filter and driver command it defines. Not tested yet, so treat it as a suspicion until a planted-filter test confirms it.
+A planted-filter test confirmed it: with only the four overrides the spec listed, `git status` and `git diff` in an untrusted repository ran a clean filter and a textconv program from the repository's own config. Safi approved the fix.
+
+`GitRunner` now reads the repository's config before each untrusted call and overrides every setting there that names a program, leaving the user's global and system config alone. It also adds `--no-ext-diff --no-textconv` to diff-family commands itself, because Git tries to run an empty textconv command instead of skipping it. Stage 5 of the spec was edited and the matching text in 06 brought in line. The trust test now plants a filter and a textconv driver next to the hooks and fsmonitor command.
+
+Known cost: one extra `git config` call per Git call in an untrusted repository. Cache it per runner if a profile ever shows it.

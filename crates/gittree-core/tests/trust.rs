@@ -47,6 +47,50 @@ impl Planted {
             &["config", "core.fsmonitor", fsmonitor.to_str().unwrap()],
         );
 
+        // A filter and a textconv driver, named by .gitattributes and defined
+        // in the repository's own config.
+        let filter = repo.path().join(".git/filter.sh");
+        std::fs::write(
+            &filter,
+            format!(
+                "#!/bin/sh\ntouch '{}'\ncat\n",
+                markers.path().join("filter").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&filter, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let textconv = repo.path().join(".git/textconv.sh");
+        std::fs::write(
+            &textconv,
+            format!(
+                "#!/bin/sh\ntouch '{}'\ncat \"$1\"\n",
+                markers.path().join("textconv").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&textconv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        repo.git(
+            0,
+            &["config", "filter.planted.clean", filter.to_str().unwrap()],
+        );
+        repo.git(
+            0,
+            &["config", "filter.planted.smudge", filter.to_str().unwrap()],
+        );
+        repo.git(
+            0,
+            &[
+                "config",
+                "diff.planted.textconv",
+                textconv.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(
+            repo.path().join(".git/info/attributes"),
+            "* filter=planted diff=planted\n",
+        )
+        .unwrap();
+
         // Make the working tree differ from the index, so status has work.
         std::fs::write(repo.path().join("file.txt"), "two\n").unwrap();
         Self { repo, markers }
@@ -70,7 +114,14 @@ fn plain_git_runs_the_planted_programs() {
     // next test proves something.
     let planted = Planted::new();
     planted.repo.git(0, &STATUS);
-    assert!(planted.markers().contains(&"fsmonitor".to_owned()));
+    planted.repo.git(0, &["diff"]);
+    let markers = planted.markers();
+    for name in ["fsmonitor", "filter", "textconv"] {
+        assert!(
+            markers.contains(&name.to_owned()),
+            "{name} did not run: {markers:?}"
+        );
+    }
 }
 
 #[test]

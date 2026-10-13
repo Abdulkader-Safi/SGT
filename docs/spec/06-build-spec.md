@@ -165,7 +165,7 @@ Persisted in the app data folder:
 
 An in-process Rust API in `gittree-core`. Functions take a `&GitRunner` and return `Result<T, GitError>`. `GitError { kind, args, exit_code, stderr }` with kinds: `GitNotFound`, `GitTooOld`, `NotARepository`, `Untrusted`, `IndexLocked`, `Conflict`, `DirtyWorkTree`, `NonFastForward`, `AuthFailed`, `Network`, `RefExists`, `RefNotFound`, `PatchDoesNotApply`, `Cancelled`, `Other`. Each kind has one plain-language message in `locales/en.yml`.
 
-Untrusted repositories: `GitRunner` adds `-c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.sshCommand=ssh -c credential.helper=` and returns `Untrusted` for every write or network function. Every diff call passes `--no-color --no-ext-diff --no-textconv`.
+Untrusted repositories: `GitRunner` adds `-c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.sshCommand=ssh -c credential.helper=` and returns `Untrusted` for every write or network function. It also reads the repository's own config before each call and overrides every setting there that names a program (`filter.*.clean`, `smudge` and `process`, `merge.*.driver`, `core.pager`, `pager.*`, `alias.*`, `gpg.program` and the like), because those names are chosen by the repository and no fixed list can cover them. Settings from the user's global and system config are left alone. `GitRunner` itself adds `--no-ext-diff --no-textconv` to `diff`, `show`, `log`, `diff-tree`, `diff-index`, `diff-files` and `blame` in an untrusted repository, since an empty diff driver cannot be set through config. Every diff call passes `--no-color --no-ext-diff --no-textconv`.
 
 Setup:
 
@@ -503,7 +503,7 @@ Repositories that use worktrees, submodules or LFS must still open and behave co
 4. Undo correctness. Mitigation: undo refused unless the repository matches the journal's "after" state, a round-trip test per action in M7.
 5. Parsing Git output. Mitigation: porcelain and `-z` formats, `LC_ALL=C`, the 2.39 minimum, tests with hostile file names.
 6. Credential prompts. Mitigation: the askpass spike is the first task of M6, with a documented fallback.
-7. Untrusted repositories. Mitigation: read-only mode with a fixed set of read commands and every known hook and helper disabled, plus the planted-hook test in M1.
+7. Untrusted repositories. Mitigation: read-only mode with a fixed set of read commands and every known hook and helper disabled, plus the planted-hook test in M1, extended in M2 with a planted filter and textconv driver.
 8. Name clash: another commercial Git client already uses "GitTree". Mitigation: keep the name in one constant and the bundle metadata, and rename before any public release.
 
 ## 13. Instructions for Claude Code

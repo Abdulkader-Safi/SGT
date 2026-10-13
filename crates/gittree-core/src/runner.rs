@@ -222,6 +222,124 @@ impl GitRunner {
         }
     }
 
+    /// Runs a network command: clone, fetch, pull or push. `on_line` gets
+    /// each line Git writes to stderr as it arrives, split at carriage
+    /// returns too, which is how Git reports progress. `env` adds variables
+    /// for this call, such as the askpass helper. Setting `cancel` sends
+    /// SIGTERM to Git and its children, then SIGKILL after 2 seconds.
+    pub fn run_network<I, S>(
+        &self,
+        args: I,
+        env: &[(String, String)],
+        cancel: &AtomicBool,
+        mut on_line: impl FnMut(&str),
+    ) -> Result<(), GitError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        use std::os::unix::process::CommandExt;
+
+        let args: Vec<OsString> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
+        let shown: Vec<String> = args.iter().map(|a| redact(&a.to_string_lossy())).collect();
+        let error = |kind, exit_code, stderr: String| GitError {
+            kind,
+            args: shown.clone(),
+            exit_code,
+            stderr,
+        };
+        if !self.trusted {
+            return Err(error(GitErrorKind::Untrusted, None, String::new()));
+        }
+        let mut command = Command::new(&self.git);
+        command
+            .current_dir(&self.dir)
+            .args(&args)
+            .env("LC_ALL", "C")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_EDITOR", "true")
+            .env("GIT_PAGER", "cat")
+            .envs(env.iter().map(|(key, value)| (key, value)))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            // Its own group, so cancelling also reaches ssh and helpers.
+            .process_group(0);
+        let started = Instant::now();
+        let mut child = command
+            .spawn()
+            .map_err(|e| error(GitErrorKind::GitNotFound, None, e.to_string()))?;
+        let pid = child.id() as libc::pid_t;
+        let mut stdout = child.stdout.take().expect("stdout is piped");
+        let mut stderr = child.stderr.take().expect("stderr is piped");
+        let done = AtomicBool::new(false);
+
+        let mut tail = String::new();
+        thread::scope(|scope| {
+            scope.spawn(move || {
+                let _ = io::copy(&mut stdout, &mut io::sink());
+            });
+            scope.spawn(|| {
+                let mut asked_at: Option<Instant> = None;
+                while !done.load(Ordering::Relaxed) {
+                    if cancel.load(Ordering::Relaxed) {
+                        match asked_at {
+                            None => {
+                                // SAFETY: signals a process group this call made.
+                                unsafe { libc::killpg(pid, libc::SIGTERM) };
+                                asked_at = Some(Instant::now());
+                            }
+                            Some(at) if at.elapsed() > Duration::from_secs(2) => {
+                                unsafe { libc::killpg(pid, libc::SIGKILL) };
+                                break;
+                            }
+                            Some(_) => {}
+                        }
+                    }
+                    thread::park_timeout(Duration::from_millis(20));
+                }
+            });
+            let mut line = Vec::new();
+            let mut byte = [0u8; 4096];
+            loop {
+                let read = match stderr.read(&mut byte) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => read,
+                };
+                for &b in &byte[..read] {
+                    if b == b'\r' || b == b'\n' {
+                        if !line.is_empty() {
+                            let text = String::from_utf8_lossy(&line).into_owned();
+                            on_line(&text);
+                            // Progress lines end in a carriage return and
+                            // are not part of the error text.
+                            if b == b'\n' {
+                                tail.push_str(&text);
+                                tail.push('\n');
+                            }
+                            line.clear();
+                        }
+                    } else {
+                        line.push(b);
+                    }
+                }
+            }
+            done.store(true, Ordering::Relaxed);
+        });
+
+        let status = child.wait();
+        let exit_code = status.as_ref().ok().and_then(|status| status.code());
+        let stderr = capped(&tail);
+        self.record(&shown, started, exit_code, &stderr);
+        if cancel.load(Ordering::Relaxed) {
+            return Err(error(GitErrorKind::Cancelled, exit_code, stderr));
+        }
+        match status {
+            Ok(status) if status.success() => Ok(()),
+            _ => Err(error(classify(&stderr), exit_code, stderr)),
+        }
+    }
+
     /// Overrides for every setting in the repository's own config that names
     /// a program: filters, merge drivers, pagers and the rest. (Diff drivers
     /// are handled by flags, see `shows_diffs`.) The

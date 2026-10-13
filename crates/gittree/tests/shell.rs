@@ -1295,3 +1295,27 @@ fn an_agent_suggests_a_conflict_result_without_staging_it(cx: &mut TestAppContex
     let on_disk = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
     assert!(on_disk.contains("<<<<<<<") && on_disk.contains("SIDE"));
 }
+
+/// The settings window opens and draws without a panic, and a tool switch
+/// reaches the saved settings. Only the page that shows first is drawn.
+#[gpui_kit::test]
+fn the_settings_window_draws_and_a_tool_can_be_switched_off(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let shell = launch(data.path(), None, cx);
+    cx.update(gittree::views::settings::open);
+    cx.run_until_parked();
+    let windows = cx.update(|cx| cx.windows());
+    assert_eq!(windows.len(), 2);
+    for window in windows {
+        cx.update_window(window, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+    }
+    cx.update(|cx| {
+        shell.app.update(cx, |app, cx| {
+            app.update_settings(|s| s.mcp_tools_off.push("git_stash".into()), cx)
+        })
+    });
+    shell.quit(cx);
+    let saved = std::fs::read_to_string(data.path().join("settings.json")).unwrap();
+    assert!(saved.contains("git_stash"), "{saved}");
+}

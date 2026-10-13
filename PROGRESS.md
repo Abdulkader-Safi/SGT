@@ -309,9 +309,16 @@ Checked by tests: the protocol (initialize, notifications, unknown methods, one 
 - Nothing is forced: a branch with unmerged commits and a worktree with changes are refused by Git, and stashes cannot be dropped through the server.
 - Every changing action needs a trusted repository and access set to read and change. Listing works read-only.
 
+### Step 3 (built): the MCP page in Settings
+
+- Settings has a second page, "MCP server": the access choice, the command that adds the server to Claude Code with a Copy button, and one switch per tool.
+- A tool that is switched off is not listed to agents and cannot be called. The server reads the switches when it starts, so a change applies to the next client session.
+- The AI helper choice stays on the first page.
+
+Not in it, against the design: the "Running, 2 clients" status, the on and off switch for the whole server, "Ask before each change", and commands for Cursor and VS Code. The first three need the server and the app to talk to each other. The MCP page itself has not been looked at on screen, and the test draws only the first page.
+
 ### Still to do
 
-- The MCP page in Settings from the design (per-tool switches, the copy-ready client command).
 - The agent activity panel and the approval banner. Both need the server and a running app to talk to each other, which they do not yet: today the server is its own process.
 
 ## M4: branches, tags, stash

@@ -25,6 +25,26 @@ pub struct Server {
     runner: GitRunner,
     journal: Journal,
     access: McpAccess,
+    /// Tools the user switched off in Settings.
+    off: Vec<String>,
+}
+
+/// Every tool by name, and whether it can change the repository.
+pub const TOOLS: [(&str, bool); 8] = [
+    ("git_status", false),
+    ("git_log_or_diff", false),
+    ("git_blame", false),
+    ("git_branch", true),
+    ("git_checkout", true),
+    ("git_stash", true),
+    ("git_worktree", true),
+    ("git_add_or_commit", true),
+];
+
+/// The command that adds this server to Claude Code. `program` is this
+/// app's own binary.
+pub fn client_command(program: &Path) -> String {
+    format!("claude mcp add sgt -- \"{}\" mcp", program.display())
 }
 
 /// A tool call that could not run, in words for the agent.
@@ -36,7 +56,18 @@ impl Server {
             runner,
             journal: Journal::new(common_dir),
             access,
+            off: Vec::new(),
         }
+    }
+
+    /// Leaves out the named tools: they are not listed and cannot be called.
+    pub fn without(mut self, tools: Vec<String>) -> Self {
+        self.off = tools;
+        self
+    }
+
+    fn is_off(&self, tool: &str) -> bool {
+        self.off.iter().any(|off| off == tool)
     }
 
     /// Reads requests until the input ends, answering each on one line.
@@ -75,7 +106,13 @@ impl Server {
                     set to read and change. Commits made here can be undone in the app.",
             }),
             Some("ping") => json!({}),
-            Some("tools/list") => json!({ "tools": tools() }),
+            Some("tools/list") => {
+                let mut list = tools();
+                if let Some(list) = list.as_array_mut() {
+                    list.retain(|tool| !self.is_off(tool["name"].as_str().unwrap_or("")));
+                }
+                json!({ "tools": list })
+            }
             Some("tools/call") => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -93,6 +130,11 @@ impl Server {
     fn call(&self, name: &str, args: &Value) -> Result<String, Refusal> {
         let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
         let action = text("action");
+        if self.is_off(name) {
+            return Err(format!(
+                "The user has switched {name} off in Safi Git Tree's settings."
+            ));
+        }
         match name {
             "git_status" => self.status(),
             "git_log_or_diff" if action == "diff" => self.diff(args),

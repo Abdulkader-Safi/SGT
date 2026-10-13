@@ -1,11 +1,15 @@
 use gittree_core::agent::AgentKind;
+use gittree_core::mcp;
 use gittree_core::store::{DiffView, McpAccess, PullMode, Settings as Stored, ThemeChoice};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
+use gpui_kit::component::{Sizable, h_flex};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, Context, Global, IntoElement, ParentElement, Render,
-    SharedString, Styled, TitlebarOptions, Window, WindowBounds, WindowOptions, div, px, size,
+    AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Context, Global, IntoElement,
+    ParentElement, Render, SharedString, Styled, TitlebarOptions, Window, WindowBounds,
+    WindowOptions, div, px, size,
 };
 use rust_i18n::t;
 
@@ -180,22 +184,8 @@ impl Render for SettingsView {
                 ),
             ));
 
-        let agents = SettingGroup::new()
+        let ai = SettingGroup::new()
             .title(label("settings.agents"))
-            .item(
-                SettingItem::new(
-                    label("settings.mcp_access"),
-                    choice(
-                        &[
-                            (McpAccess::ReadOnly, "settings.mcp_read_only"),
-                            (McpAccess::ReadWrite, "settings.mcp_read_write"),
-                        ],
-                        |s| s.mcp_access,
-                        |s, v| s.mcp_access = v,
-                    ),
-                )
-                .description(label("settings.mcp_help")),
-            )
             .item(
                 SettingItem::new(
                     label("settings.ai_agent"),
@@ -220,14 +210,103 @@ impl Render for SettingsView {
                 .description(label("settings.ai_command_help")),
             );
 
+        let mcp_server = SettingGroup::new()
+            .title(label("settings.mcp_server"))
+            .item(
+                SettingItem::new(
+                    label("settings.mcp_access"),
+                    choice(
+                        &[
+                            (McpAccess::ReadOnly, "settings.mcp_read_only"),
+                            (McpAccess::ReadWrite, "settings.mcp_read_write"),
+                        ],
+                        |s| s.mcp_access,
+                        |s, v| s.mcp_access = v,
+                    ),
+                )
+                .description(label("settings.mcp_help")),
+            )
+            .item(
+                SettingItem::new(
+                    label("settings.mcp_connect"),
+                    SettingField::render(|_, _, cx| {
+                        let p = crate::palette::palette(cx);
+                        let command = std::env::current_exe()
+                            .map(|program| mcp::client_command(&program))
+                            .unwrap_or_default();
+                        let copied = command.clone();
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .max_w(px(300.))
+                                    .truncate()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded(px(6.))
+                                    .bg(p.bg_sunken)
+                                    .border_1()
+                                    .border_color(p.border)
+                                    .font_family(crate::views::graph::mono(cx))
+                                    .text_size(px(11.))
+                                    .child(command),
+                            )
+                            .child(
+                                Button::new("copy-mcp-command")
+                                    .small()
+                                    .label(t!("ai.copy").into_owned())
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            copied.clone(),
+                                        ))
+                                    }),
+                            )
+                    }),
+                )
+                .description(label("settings.mcp_connect_help")),
+            );
+        // One switch per tool. A tool that is off is not offered to agents.
+        let mcp_tools = mcp::TOOLS.iter().fold(
+            SettingGroup::new().title(label("settings.mcp_tools")),
+            |group, &(name, changes)| {
+                group.item(
+                    SettingItem::new(
+                        name,
+                        SettingField::switch(
+                            move |cx| read(cx, |s| !s.mcp_tools_off.iter().any(|off| off == name)),
+                            move |on, cx| {
+                                write(cx, |s| {
+                                    s.mcp_tools_off.retain(|off| off != name);
+                                    if !on {
+                                        s.mcp_tools_off.push(name.to_owned());
+                                    }
+                                })
+                            },
+                        ),
+                    )
+                    .description(label(if changes {
+                        "settings.mcp_tool_changes"
+                    } else {
+                        "settings.mcp_tool_reads"
+                    })),
+                )
+            },
+        );
+
         div().size_full().child(
-            Settings::new("settings").page(
-                SettingPage::new(label("settings.title"))
-                    .default_open(true)
-                    .group(appearance)
-                    .group(git)
-                    .group(agents),
-            ),
+            Settings::new("settings")
+                .page(
+                    SettingPage::new(label("settings.title"))
+                        .default_open(true)
+                        .group(appearance)
+                        .group(git)
+                        .group(ai),
+                )
+                .page(
+                    SettingPage::new(label("settings.mcp_page"))
+                        .group(mcp_server)
+                        .group(mcp_tools),
+                ),
         )
     }
 }

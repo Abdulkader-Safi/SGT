@@ -271,3 +271,50 @@ fn branches_checkout_stash_and_worktrees_are_journaled_and_never_forced() {
     }
     assert!(!call(&reader, "git_stash", json!({})).1);
 }
+
+#[test]
+fn a_tool_switched_off_is_not_listed_and_cannot_be_called() {
+    let repo = repo_with_changes();
+    let server = server(&repo, true, McpAccess::ReadWrite)
+        .without(vec!["git_blame".into(), "git_add_or_commit".into()]);
+    let list = server
+        .handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .unwrap();
+    let names: Vec<&str> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), gittree_core::mcp::TOOLS.len() - 2);
+    assert!(!names.contains(&"git_blame") && names.contains(&"git_status"));
+
+    let (text, failed) = call(&server, "git_blame", json!({ "path": "a.txt" }));
+    assert!(failed && text.contains("switched git_blame off"));
+    let add = json!({ "action": "add", "paths": ["a.txt"] });
+    assert!(call(&server, "git_add_or_commit", add).1);
+    assert_eq!(
+        repo.git(1, &["status", "--porcelain"]),
+        " M a.txt\n?? new.txt"
+    );
+    assert!(!call(&server, "git_status", json!({})).1);
+
+    // Every listed tool has a switch, and the other way round.
+    let all = self::server(&repo, true, McpAccess::ReadOnly)
+        .handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .unwrap();
+    let mut listed: Vec<&str> = all["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    let mut switches: Vec<&str> = gittree_core::mcp::TOOLS.iter().map(|tool| tool.0).collect();
+    listed.sort();
+    switches.sort();
+    assert_eq!(listed, switches);
+    assert_eq!(
+        gittree_core::mcp::client_command("/Apps/Safi Git Tree.app/gittree".as_ref()),
+        "claude mcp add sgt -- \"/Apps/Safi Git Tree.app/gittree\" mcp"
+    );
+}

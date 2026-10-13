@@ -131,6 +131,8 @@ pub struct Settings {
     pub auto_fetch_minutes: u32,
     /// What a coding agent may do through the MCP server.
     pub mcp_access: McpAccess,
+    /// MCP tools switched off, by name.
+    pub mcp_tools_off: Vec<String>,
     /// The installed agent that writes commit messages and explains
     /// commits, and the command when it is `Other`.
     pub ai_agent: crate::agent::AgentKind,
@@ -164,6 +166,7 @@ impl Default for Settings {
             clone_dir: if developer.is_dir() { developer } else { home },
             auto_fetch_minutes: 0,
             mcp_access: McpAccess::ReadOnly,
+            mcp_tools_off: Vec::new(),
             ai_agent: crate::agent::AgentKind::Claude,
             ai_command: String::new(),
         }

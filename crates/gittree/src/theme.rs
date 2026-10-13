@@ -34,9 +34,9 @@ pub fn apply(cx: &mut App) {
             theme.muted_foreground = p.text_secondary;
             theme.popover = p.bg_elevated;
             theme.popover_foreground = p.text;
-            theme.primary = p.accent;
-            theme.primary_hover = p.accent_hover;
-            theme.primary_active = p.accent_hover;
+            theme.primary = p.accent_fill;
+            theme.primary_hover = p.accent_fill_hover;
+            theme.primary_active = p.accent_fill_hover;
             theme.primary_foreground = p.on_accent;
             theme.secondary = p.bg_elevated;
             theme.secondary_hover = p.bg_hover;

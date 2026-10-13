@@ -86,7 +86,7 @@ impl Render for CommitDetail {
                         .rounded_full()
                         .bg(p.lanes[lane])
                         .text_size(px(11.))
-                        .text_color(p.on_accent)
+                        .text_color(p.on_lane)
                         .child(initial),
                 )
                 .child(

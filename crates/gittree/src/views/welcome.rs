@@ -114,7 +114,8 @@ impl Render for WelcomeView {
                 .gap_3()
                 .rounded(px(10.))
                 .when(primary, |row| {
-                    row.bg(p.accent).hover(|style| style.bg(p.accent_hover))
+                    row.bg(p.accent_fill)
+                        .hover(|style| style.bg(p.accent_fill_hover))
                 })
                 .when(!primary, |row| {
                     row.bg(p.bg_elevated)

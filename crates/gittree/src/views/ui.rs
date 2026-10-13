@@ -70,7 +70,7 @@ pub enum RefLabel {
 
 pub fn ref_label(kind: RefLabel, text: impl Into<SharedString>, p: Palette) -> Div {
     let (background, border, foreground, name) = match kind {
-        RefLabel::Current => (Some(p.accent), None, p.on_accent, "branch"),
+        RefLabel::Current => (Some(p.accent_fill), None, p.on_accent, "branch"),
         RefLabel::Local => (Some(p.success_subtle), None, p.success, "branch"),
         RefLabel::Remote => (
             Some(p.bg_elevated),

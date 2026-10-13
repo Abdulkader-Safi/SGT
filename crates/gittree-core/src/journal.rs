@@ -87,6 +87,13 @@ pub enum Action {
         target: String,
         mode: crate::ops::merge::ResetMode,
     },
+    /// A force-push. It cannot be undone from here, but the commit the
+    /// remote branch had is kept as a snapshot.
+    ForcePush {
+        remote: String,
+        branch: String,
+        replaced: Oid,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +143,8 @@ pub struct PendingEntry(JournalEntry);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Blocked {
     AlreadyUndone,
+    /// The action changed a remote, which cannot be taken back from here.
+    NotUndoable,
     /// HEAD or a ref moved since the action, outside the app.
     RepositoryChanged,
 }
@@ -271,6 +280,7 @@ impl Journal {
             | Action::CherryPick { .. }
             | Action::Revert { .. }
             | Action::Reset { .. } => head_before.symbolic.iter().cloned().collect(),
+            Action::ForcePush { .. } => Vec::new(),
         };
         let refs_before = touched
             .into_iter()
@@ -294,6 +304,20 @@ impl Journal {
             | Action::Merge { .. }
             | Action::CherryPick { .. }
             | Action::Revert { .. } => None,
+            Action::ForcePush {
+                remote,
+                branch,
+                replaced,
+            } => {
+                // A ref of its own keeps the replaced commit from being
+                // cleaned up.
+                let name = format!("refs/gittree/snapshots/{id}");
+                runner.write(["update-ref", &name, replaced])?;
+                Some(Snapshot {
+                    remote_ref: Some((format!("{remote}/{branch}"), replaced.clone())),
+                    ..Default::default()
+                })
+            }
             // Both can throw away or rewrite work, so the index and the
             // tracked changes are saved first.
             Action::Rebase { .. } | Action::Reset { .. } => {
@@ -421,6 +445,9 @@ impl Journal {
         if entry.undone {
             return Err(Blocked::AlreadyUndone);
         }
+        if matches!(entry.action, Action::ForcePush { .. }) {
+            return Err(Blocked::NotUndoable);
+        }
         let same = head_state(runner) == entry.head_after
             && entry
                 .refs_after
@@ -496,6 +523,7 @@ impl Journal {
             Action::StashDrop { oid, message } => runner
                 .write(["stash", "store", "-m", message, oid])
                 .map(drop)?,
+            Action::ForcePush { .. } => {}
             Action::Merge { .. }
             | Action::Rebase { .. }
             | Action::CherryPick { .. }
@@ -528,11 +556,186 @@ impl Journal {
     }
 
     fn mark_undone(&self, entry: &JournalEntry) -> Result<(), GitError> {
+        self.mark(entry, true)
+    }
+
+    fn mark(&self, entry: &JournalEntry, undone: bool) -> Result<(), GitError> {
         let mut entries = self.entries();
         for saved in entries.iter_mut().filter(|saved| saved.id == entry.id) {
-            saved.undone = true;
+            saved.undone = undone;
         }
         self.write_all(&entries)
+    }
+
+    /// The entry Undo would take back: the newest one not undone yet.
+    pub fn next_undo(&self) -> Option<JournalEntry> {
+        self.entries().into_iter().rev().find(|entry| !entry.undone)
+    }
+
+    /// The entry Redo would run again: the oldest of the undone entries at
+    /// the end of the journal. A new action after an undo ends that run.
+    pub fn next_redo(&self) -> Option<JournalEntry> {
+        let entries = self.entries();
+        let run = entries
+            .iter()
+            .rev()
+            .take_while(|entry| entry.undone)
+            .count();
+        entries.into_iter().rev().nth(run.checked_sub(1)?)
+    }
+
+    /// Redo is allowed only while the repository is where the undo left it.
+    pub fn can_redo(&self, runner: &GitRunner, entry: &JournalEntry) -> bool {
+        entry.undone
+            && head_state(runner) == entry.head_before
+            && entry
+                .refs_before
+                .iter()
+                .all(|(name, value)| &ref_value(runner, name) == value)
+    }
+
+    /// Runs an undone action again from its recorded inputs.
+    pub fn redo(
+        &self,
+        runner: &GitRunner,
+        git_dir: &Path,
+        entry: &JournalEntry,
+    ) -> Result<(), GitError> {
+        use crate::ops::{branch, merge, stage};
+        let has_commits = entry.head_before.oid.is_some();
+        match &entry.action {
+            Action::Commit { message, amend } => {
+                stage::commit(runner, message, *amend).map(drop)?
+            }
+            Action::DiscardFiles { tracked, untracked } => {
+                stage::discard_files(runner, tracked, untracked, has_commits)?
+            }
+            Action::DiscardLines { .. } => {
+                let patch = std::fs::read(self.backup_dir(&entry.id).join("discard.patch"))
+                    .map_err(io_error)?;
+                stage::apply_patch(runner, &patch, stage::Target::Discard)?;
+            }
+            // Back to where the checkout ended up.
+            Action::Checkout { .. } => match (&entry.head_after.symbolic, &entry.head_after.oid) {
+                (Some(name), _) => {
+                    let short = name.strip_prefix("refs/heads/").unwrap_or(name);
+                    runner.write(["switch", "-q", short]).map(drop)?
+                }
+                (None, Some(oid)) => runner.write(["switch", "-q", "--detach", oid]).map(drop)?,
+                (None, None) => {}
+            },
+            Action::CreateBranch { name, at, checkout } => {
+                branch::create_branch(runner, name, at, *checkout)?
+            }
+            Action::RenameBranch { old, new } => branch::rename_branch(runner, old, new)?,
+            // It was confirmed the first time, unmerged commits and all.
+            Action::DeleteBranch { name, .. } => branch::delete_branch(runner, name, true)?,
+            Action::CreateTag { name, at, message } => {
+                branch::create_tag(runner, name, at, message.as_deref())?
+            }
+            Action::DeleteTag { name } => branch::delete_tag(runner, name)?,
+            Action::StashPush {
+                message,
+                include_untracked,
+            } => branch::stash_push(runner, message, *include_untracked)?,
+            Action::StashDrop { oid, .. } => {
+                let stashes = branch::list_stashes(runner)?;
+                if let Some(stash) = stashes.iter().find(|stash| &stash.oid == oid) {
+                    branch::stash_drop(runner, stash.index)?;
+                }
+            }
+            Action::Merge { branch, no_ff } => merge::merge(runner, git_dir, branch, *no_ff)?,
+            Action::Rebase { onto } => merge::rebase(runner, git_dir, onto)?,
+            Action::CherryPick { oid, mainline } => {
+                merge::cherry_pick(runner, git_dir, oid, *mainline)?
+            }
+            Action::Revert { oid, mainline } => merge::revert(runner, git_dir, oid, *mainline)?,
+            Action::Reset { target, mode } => merge::reset(runner, target, *mode)?,
+            Action::ForcePush { .. } => {}
+        }
+        self.mark(entry, false)
+    }
+
+    /// The entries that saved something, newest first, for the snapshot
+    /// list.
+    pub fn snapshots(&self) -> Vec<JournalEntry> {
+        let mut entries: Vec<JournalEntry> = self
+            .entries()
+            .into_iter()
+            .filter(|entry| entry.snapshot.is_some())
+            .collect();
+        entries.reverse();
+        entries
+    }
+
+    /// Brings back what a snapshot saved. With `as_branch` the saved state
+    /// becomes a new branch and the working tree is left alone, which is
+    /// the only way to restore a commit a force-push replaced.
+    pub fn restore(
+        &self,
+        runner: &GitRunner,
+        entry: &JournalEntry,
+        as_branch: Option<&str>,
+    ) -> Result<(), GitError> {
+        let snapshot = entry.snapshot.clone().unwrap_or_default();
+        let backup = self.backup_dir(&entry.id);
+        let saved = snapshot
+            .tree_ref
+            .clone()
+            .or_else(|| snapshot.remote_ref.as_ref().map(|(_, oid)| oid.to_string()));
+        if let Some(name) = as_branch {
+            let Some(saved) = saved else {
+                return Err(GitError {
+                    kind: GitErrorKind::Other,
+                    args: Vec::new(),
+                    exit_code: None,
+                    stderr: "This snapshot holds no commit to make a branch from.".into(),
+                });
+            };
+            return crate::ops::branch::create_branch(runner, name, &saved, false);
+        }
+        if let Some(tree) = &snapshot.tree_ref {
+            runner
+                .write(["stash", "apply", "-q", "--index", tree])
+                .map(drop)?;
+        }
+        if snapshot.patch_file.is_some() {
+            let patch = std::fs::read(backup.join("discard.patch")).map_err(io_error)?;
+            apply_forward(runner, &patch)?;
+        }
+        if snapshot.untracked_dir.is_some() {
+            restore_files(&backup.join("untracked"), runner.dir()).map_err(io_error)?;
+        }
+        Ok(())
+    }
+
+    /// Removes entries older than 30 days or beyond the newest 200, with
+    /// their snapshot refs and backup folders. Run when a repository opens.
+    pub fn prune(&self, runner: &GitRunner, now: i64) -> Result<usize, GitError> {
+        const KEEP: usize = 200;
+        const MAX_AGE: i64 = 30 * 24 * 60 * 60;
+        let entries = self.entries();
+        let cut = entries.len().saturating_sub(KEEP);
+        let (mut kept, mut dropped) = (Vec::new(), Vec::new());
+        for (ix, entry) in entries.into_iter().enumerate() {
+            if ix < cut || now - entry.time > MAX_AGE {
+                dropped.push(entry);
+            } else {
+                kept.push(entry);
+            }
+        }
+        if dropped.is_empty() {
+            return Ok(0);
+        }
+        for entry in &dropped {
+            let _ = std::fs::remove_dir_all(self.backup_dir(&entry.id));
+            let name = format!("refs/gittree/snapshots/{}", entry.id);
+            if runner.trusted() && ref_value(runner, &name).is_some() {
+                let _ = runner.write(["update-ref", "-d", &name]);
+            }
+        }
+        self.write_all(&kept)?;
+        Ok(dropped.len())
     }
 }
 

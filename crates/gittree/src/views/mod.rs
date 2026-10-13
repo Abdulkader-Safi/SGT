@@ -8,5 +8,6 @@ pub mod root;
 pub mod settings;
 pub mod sidebar;
 pub mod staging;
+pub mod ui;
 pub mod welcome;
 pub mod workspace;

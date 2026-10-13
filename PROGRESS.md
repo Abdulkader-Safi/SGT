@@ -242,3 +242,32 @@ GPUI Kit's `SyntaxHighlighter` takes any text, so it can colour the lines of a d
 - Every watcher event reads the status and the refs. The spec splits them by where the change happened. Both reads are cheap, so the split waits for a profile that asks for it.
 - The file lists build every row each frame. That is fine at the 500 changed files of NFR-04.
 - One UI test sleeps 400 ms, because the kit's dialog takes no clicks during its quarter-second entrance and that animation runs on real time.
+
+## Design (2026-10-13)
+
+The design lives in Figma: `https://www.figma.com/design/NWCW3JuU78OiVV6dOT9pzQ/SGT`. It has a Cover, Foundations (colour variables in Dark and Light, text styles, spacing), Components, and a Design page with every screen and state.
+
+### Restyled to the design
+
+Everything built in M1 to M3 now follows it:
+
+- `palette.rs` holds the colour tokens for both themes, and `theme.rs` copies the matching ones into the kit's theme so its buttons, inputs and dialogs agree.
+- `icons.rs` embeds 32 icons. 21 are Reicon outline icons. Branch, commit, merge and a few others are drawn for the app.
+- `views/ui.rs` has the shared pieces: ref labels, status marks, badges, key hints, captions, banners and empty states.
+- The toolbar sits under the traffic lights as one strip. Git check and Welcome get a plain title strip.
+- Welcome, Git check, sidebar, graph (28 px rows, column titles, ring for a merge commit, dimmed rows while searching), commit details, the diff pane (gutters, hunk rows, inline and split segments, selection bar), the staging lists (row actions on hover) and the commit box.
+
+### Shown but not working yet
+
+These are in the design and on screen, greyed out, until their milestone: Redo, Fetch, Pull, Push, Branch and Stash in the toolbar, and "Clone repository" on Welcome.
+
+### Not built yet
+
+The design also covers screens whose features are not built: Clone (M6), context menus and the branch, tag and stash dialogs (M4), merge, rebase, reset and the conflict view (M5), force-push, remotes and the credential prompt (M6), the command palette and the snapshot list (M7). Each gets built to the design with its milestone.
+
+### Differences from the design
+
+- The interface font is the system font, not Inter. The diff font is the one from Settings (Menlo by default), not JetBrains Mono.
+- The Settings window still uses the kit's own form layout.
+- Toasts and dialogs are the kit's, recoloured through the theme.
+- Diff lines are 22 px high, not 20, so the default diff font is not clipped.

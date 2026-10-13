@@ -2,14 +2,18 @@ use gittree_core::ops::setup::MIN_GIT;
 use gittree_core::{GitError, GitErrorKind};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
+    AppContext, Context, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Window,
+    div, px,
 };
 use rust_i18n::t;
 
+use super::graph::mono;
+use super::ui::{big_icon, kbd};
 use crate::app_state::{AppState, GitCheck};
 use crate::error_message;
+use crate::palette::palette;
 
 /// Blocks the app until a usable Git is found (FR-REPO-07).
 pub struct GitCheckView {
@@ -50,45 +54,131 @@ impl GitCheckView {
 
 impl Render for GitCheckView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let mono = mono(cx);
         let error: Option<GitError> = match &self.app.read(cx).git {
             GitCheck::Failed(error) => Some(error.clone()),
             _ => None,
         };
-        let muted = cx.theme().muted_foreground;
         let required = format!("{}.{}", MIN_GIT.0, MIN_GIT.1);
-
-        v_flex().size_full().items_center().justify_center().child(
-            v_flex()
-                .w(px(420.))
+        let too_old = error
+            .as_ref()
+            .is_some_and(|error| error.kind == GitErrorKind::GitTooOld);
+        let found = match &error {
+            Some(error) if too_old => error.stderr.trim().to_owned(),
+            _ => t!("git_check.found_none").into_owned(),
+        };
+        let row = |label: String, value: String, color| {
+            h_flex()
+                .h(px(32.))
+                .px_3()
                 .gap_3()
-                .child(div().text_xl().child(t!("git_check.title").into_owned()))
-                .children(error.map(|error| {
-                    let found = (error.kind == GitErrorKind::GitTooOld)
-                        .then(|| t!("git_check.found", version = error.stderr).into_owned());
-                    v_flex()
-                        .gap_1()
-                        .child(error_message(error.kind))
-                        .children(found)
-                }))
+                .border_b_1()
+                .border_color(p.border)
                 .child(
                     div()
-                        .text_color(muted)
-                        .child(t!("git_check.required", version = required).into_owned()),
+                        .w(px(90.))
+                        .flex_none()
+                        .text_color(p.text_secondary)
+                        .child(label),
                 )
                 .child(
                     div()
-                        .text_color(muted)
-                        .child(t!("git_check.path_label").into_owned()),
+                        .flex_1()
+                        .truncate()
+                        .font_family(mono.clone())
+                        .text_size(px(12.))
+                        .text_color(color)
+                        .child(value),
                 )
-                .child(Input::new(&self.path).id("git-path"))
-                .child(
-                    div().child(
-                        Button::new("retry")
-                            .primary()
-                            .label(t!("git_check.retry").into_owned())
-                            .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
+        };
+
+        v_flex()
+            .size_full()
+            .bg(p.bg_app)
+            .text_size(px(13.))
+            .items_center()
+            .justify_center()
+            .child(
+                v_flex()
+                    .w(px(480.))
+                    .gap_5()
+                    .items_center()
+                    .child(big_icon("warning", p.warning, p.warning_subtle, p))
+                    .child(
+                        v_flex()
+                            .gap(px(6.))
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(20.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(t!("git_check.title").into_owned()),
+                            )
+                            .children(error.as_ref().map(|error| {
+                                div()
+                                    .text_center()
+                                    .text_color(p.text_secondary)
+                                    .child(error_message(error.kind))
+                            })),
+                    )
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .rounded(px(8.))
+                            .bg(p.bg_panel)
+                            .border_1()
+                            .border_color(p.border)
+                            .overflow_hidden()
+                            .child(row(
+                                t!("git_check.found_label").into_owned(),
+                                found,
+                                if too_old { p.danger } else { p.text_tertiary },
+                            ))
+                            .child(row(
+                                t!("git_check.required_label").into_owned(),
+                                t!("git_check.required", version = required).into_owned(),
+                                p.text,
+                            )),
+                    )
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.text_secondary)
+                                    .child(t!("git_check.path_label").into_owned()),
+                            )
+                            .child(Input::new(&self.path).id("git-path"))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(p.text_tertiary)
+                                    .child(t!("git_check.path_help").into_owned()),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(p.text_tertiary)
+                                    .child(t!("git_check.install_with").into_owned()),
+                            )
+                            .child(kbd("xcode-select --install", p).font_family(mono.clone()))
+                            .child(div().flex_1())
+                            .child(
+                                Button::new("retry")
+                                    .primary()
+                                    .label(t!("git_check.retry").into_owned())
+                                    .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
+                            ),
                     ),
-                ),
-        )
+            )
     }
 }

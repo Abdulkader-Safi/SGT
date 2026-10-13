@@ -167,10 +167,32 @@ impl Render for RootView {
             (GitCheck::Ready(_), Some(workspace)) => workspace.clone().into_any_element(),
             (GitCheck::Ready(_), None) => self.welcome.clone().into_any_element(),
         };
+        let p = crate::palette::palette(cx);
+        // The workspace has its toolbar under the traffic lights. The other
+        // screens get a plain strip with the app's name.
+        let strip = self.workspace.is_none().then(|| {
+            div()
+                .h(px(40.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(p.bg_panel)
+                .border_b_1()
+                .border_color(p.border)
+                .text_size(px(12.))
+                .text_color(p.text_secondary)
+                .child(crate::APP_NAME)
+        });
+        let content = v_flex()
+            .size_full()
+            .children(strip)
+            .child(div().flex_1().overflow_hidden().child(content));
         let drop_target = cx.theme().drop_target;
         div()
             .id("root")
             .size_full()
+            .bg(p.bg_app)
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(drop_target))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 // AppState reports a path that is not a repository folder.

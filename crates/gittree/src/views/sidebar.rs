@@ -1,14 +1,16 @@
 use gittree_core::model::{Ref, RefKind};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Window, div,
+    AppContext, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use rust_i18n::t;
 
+use super::ui::{caption, ic};
+use crate::palette::palette;
 use crate::repo_state::RepoState;
 
 const GROUPS: [(RefKind, &str); 4] = [
@@ -44,12 +46,23 @@ impl Sidebar {
         }
     }
 
-    fn row(&self, ix: usize, r: &Ref, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let theme = cx.theme();
-        let (muted, hover) = (theme.muted_foreground, theme.list_hover);
+    fn row(
+        &self,
+        ix: usize,
+        r: &Ref,
+        selected: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let p = palette(cx);
         let repo = self.repo.clone();
         let target = r.target.clone();
         let name: SharedString = r.short_name().to_owned().into();
+        let icon = match r.kind {
+            RefKind::Local => "branch",
+            RefKind::Remote => "remote",
+            RefKind::Tag => "tag",
+            RefKind::Stash => "stash",
+        };
         let track = [("↑", r.ahead), ("↓", r.behind)]
             .into_iter()
             .filter(|(_, count)| *count > 0)
@@ -59,29 +72,43 @@ impl Sidebar {
         h_flex()
             .id(("ref", ix))
             .w_full()
-            .pl_5()
-            .pr_2()
-            .py_0p5()
+            .h(px(28.))
+            .pl(px(30.))
+            .pr_3()
             .gap_2()
             .cursor_pointer()
-            .hover(move |style| style.bg(hover))
-            .when(r.is_current, |row| {
-                row.font_weight(gpui_kit::FontWeight::BOLD)
-            })
+            .when(selected, |row| row.bg(p.bg_selected))
+            .when(!selected, |row| row.hover(|style| style.bg(p.bg_hover)))
+            .when(r.is_current, |row| row.font_weight(FontWeight::MEDIUM))
             .on_click(move |_, _, cx| repo.update(cx, |repo, cx| repo.select_oid(&target, cx)))
+            .child(ic(
+                icon,
+                14.,
+                if r.is_current {
+                    p.accent
+                } else {
+                    p.text_tertiary
+                },
+            ))
             .child(div().flex_1().truncate().child(name))
             .when(!track.is_empty(), |row| {
-                row.child(div().flex_none().text_xs().text_color(muted).child(track))
+                row.child(
+                    div()
+                        .flex_none()
+                        .text_size(px(11.))
+                        .text_color(p.text_secondary)
+                        .child(track),
+                )
             })
     }
 }
 
 impl Render for Sidebar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, background) = (theme.muted_foreground, theme.sidebar);
+        let p = palette(cx);
         let needle = self.filter.read(cx).value().trim().to_lowercase();
         let repo = self.repo.read(cx);
+        let selected = repo.selection.oid.clone();
 
         let groups = GROUPS.iter().enumerate().map(|(group, (kind, title))| {
             let rows: Vec<_> = repo
@@ -92,17 +119,22 @@ impl Render for Sidebar {
                 .filter(|(_, r)| {
                     needle.is_empty() || r.short_name().to_lowercase().contains(&needle)
                 })
-                .map(|(ix, r)| self.row(ix, r, cx).into_any_element())
+                .map(|(ix, r)| {
+                    // The branch or tag that names the selected commit.
+                    let is_selected = selected.as_ref() == Some(&r.target);
+                    self.row(ix, r, is_selected, cx).into_any_element()
+                })
                 .collect();
             let collapsed = self.collapsed[group];
             let count = rows.len();
             let empty_stashes =
                 (*kind == RefKind::Stash && count == 0 && needle.is_empty()).then(|| {
                     div()
-                        .pl_5()
-                        .pr_2()
-                        .text_xs()
-                        .text_color(muted)
+                        .pl(px(30.))
+                        .pr_3()
+                        .py_1()
+                        .text_size(px(12.))
+                        .text_color(p.text_tertiary)
                         .child(t!("sidebar.no_stashes").into_owned())
                 });
             v_flex()
@@ -110,19 +142,25 @@ impl Render for Sidebar {
                 .child(
                     h_flex()
                         .id(("group", group))
-                        .px_2()
-                        .py_1()
-                        .gap_1()
+                        .h(px(26.))
+                        .px_3()
+                        .gap(px(6.))
                         .cursor_pointer()
-                        .text_xs()
-                        .text_color(muted)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.collapsed[group] = !this.collapsed[group];
                             cx.notify();
                         }))
-                        .child(if collapsed { "▸" } else { "▾" })
-                        .child(div().flex_1().child(t!(*title).into_owned()))
-                        .child(count.to_string()),
+                        .child(ic(
+                            if collapsed {
+                                "chevron-right"
+                            } else {
+                                "chevron-down"
+                            },
+                            12.,
+                            p.text_tertiary,
+                        ))
+                        .child(div().flex_1().child(caption(t!(*title).to_uppercase(), p)))
+                        .child(caption(count.to_string(), p)),
                 )
                 .when(!collapsed, |group| {
                     group.children(rows).children(empty_stashes)
@@ -131,18 +169,20 @@ impl Render for Sidebar {
 
         v_flex()
             .size_full()
-            .bg(background)
-            .text_sm()
-            .child(
-                div()
-                    .p_2()
-                    .child(Input::new(&self.filter).small().cleanable(true)),
-            )
+            .bg(p.bg_panel)
+            .border_r_1()
+            .border_color(p.border)
+            .child(div().p(px(10.)).child(
+                Input::new(&self.filter).small().cleanable(true).prefix(ic(
+                    "search",
+                    14.,
+                    p.text_tertiary,
+                )),
+            ))
             .child(
                 v_flex()
                     .id("refs")
                     .flex_1()
-                    .gap_1()
                     .children(groups)
                     .overflow_y_scrollbar(),
             )

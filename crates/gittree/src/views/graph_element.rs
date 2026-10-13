@@ -1,36 +1,42 @@
 use gittree_core::graph::{EdgeKind, GraphRow};
 use gpui_kit::{
     Bounds, Hsla, IntoElement, PathBuilder, Pixels, Styled, Window, canvas, fill, point, px, quad,
-    rgb, size,
+    size,
 };
 
-pub const ROW_HEIGHT: Pixels = px(24.);
-pub const LANE_WIDTH: Pixels = px(14.);
+pub const ROW_HEIGHT: Pixels = px(28.);
+pub const LANE_WIDTH: Pixels = px(16.);
 const LINE_WIDTH: Pixels = px(2.);
-const DOT_SIZE: Pixels = px(9.);
-
-// Moves to the theme in M1.
-const LANE_COLORS: [u32; 8] = [
-    0x3b82f6, 0xf59e0b, 0x10b981, 0xef4444, 0x8b5cf6, 0x06b6d4, 0xec4899, 0x84cc16,
-];
+const DOT_SIZE: Pixels = px(10.);
 
 /// The graph column of one row: its lanes, edges and commit dot.
-pub fn graph_cell(row: GraphRow, lanes: usize, background: Hsla) -> impl IntoElement {
+pub fn graph_cell(
+    row: GraphRow,
+    lanes: usize,
+    colors: [Hsla; 8],
+    background: Hsla,
+) -> impl IntoElement {
     canvas(
         |_, _, _| (),
-        move |bounds, _, window, _| paint_row(&row, bounds, background, window),
+        move |bounds, _, window, _| paint_row(&row, bounds, colors, background, window),
     )
     .w(LANE_WIDTH * lanes as f32)
     .h_full()
     .flex_none()
 }
 
-fn paint_row(row: &GraphRow, bounds: Bounds<Pixels>, background: Hsla, window: &mut Window) {
+fn paint_row(
+    row: &GraphRow,
+    bounds: Bounds<Pixels>,
+    colors: [Hsla; 8],
+    background: Hsla,
+    window: &mut Window,
+) {
     let x = |lane: u16| bounds.left() + LANE_WIDTH * (lane as f32 + 0.5);
     let (top, mid, bottom) = (bounds.top(), bounds.center().y, bounds.bottom());
 
     for edge in &row.edges {
-        let color = rgb(LANE_COLORS[edge.color as usize]);
+        let color = colors[edge.color as usize % 8];
         let (from, to) = (x(edge.from_lane), x(edge.to_lane));
         let (start, end) = match edge.kind {
             EdgeKind::Through => (point(from, top), point(to, bottom)),
@@ -61,13 +67,21 @@ fn paint_row(row: &GraphRow, bounds: Bounds<Pixels>, background: Hsla, window: &
         }
     }
 
+    // A merge commit is a ring. Every other commit is a filled dot.
+    let merge = row
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::ToParent)
+        .count()
+        > 1;
+    let color = colors[row.color as usize % 8];
     let dot = Bounds::centered_at(point(x(row.lane), mid), size(DOT_SIZE, DOT_SIZE));
     window.paint_quad(quad(
         dot,
         DOT_SIZE / 2.,
-        rgb(LANE_COLORS[row.color as usize]),
-        px(1.5),
-        background,
+        if merge { background } else { color },
+        px(2.),
+        color,
         Default::default(),
     ));
 }

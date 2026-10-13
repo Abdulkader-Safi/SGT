@@ -1,7 +1,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use gittree_core::model::{DiffKind, DiffLine, FileDiff, LineKind};
+use gittree_core::model::{Change, DiffKind, DiffLine, FileDiff, LineKind};
 use gittree_core::ops::read::LARGE_DIFF_SHOWN;
 use gittree_core::ops::stage::Target;
 use gittree_core::patch::{self, Lines};
@@ -11,17 +11,20 @@ use gpui_kit::component::highlighter::{HighlightTheme, SyntaxHighlighter};
 use gpui_kit::component::{ActiveTheme, Disableable, Rope, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AnyElement, AppContext, Context, Entity, HighlightStyle, Hsla, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Render, SharedString, Styled,
-    StyledText, Task, UniformListScrollHandle, Window, div, px, uniform_list,
+    AnyElement, AppContext, Context, Entity, FontWeight, HighlightStyle, InteractiveElement,
+    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, StyledText, Task, UniformListScrollHandle, Window, div, px,
+    uniform_list,
 };
 use rust_i18n::t;
 
 use super::dialogs::confirm_destructive;
+use super::ui::{empty_state, ic, kbd, status_mark};
 use crate::app_state::app_state;
+use crate::palette::Palette;
 use crate::repo_state::{Op, RepoState};
 
-const LINE_HEIGHT: f32 = 20.;
+const LINE_HEIGHT: f32 = 22.;
 
 /// Where the shown diff comes from, which decides what can be done to it.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -385,28 +388,9 @@ impl DiffPane {
     }
 }
 
-/// The colours a row needs, read once per frame.
-#[derive(Clone, Copy)]
-struct Palette {
-    muted: Hsla,
-    added: Hsla,
-    removed: Hsla,
-    hunk: Hsla,
-    picked: Hsla,
-    border: Hsla,
-}
-
 impl Render for DiffPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let palette = Palette {
-            muted: theme.muted_foreground,
-            added: theme.success.opacity(0.15),
-            removed: theme.danger.opacity(0.15),
-            hunk: theme.muted,
-            picked: theme.primary.opacity(0.3),
-            border: theme.border,
-        };
+        let palette = crate::palette::palette(cx);
         let settings = &app_state(cx).read(cx).settings;
         let split = settings.diff_view == DiffView::Split;
         let (mono, mono_size) = (
@@ -416,16 +400,12 @@ impl Render for DiffPane {
         let repo = self.repo.read(cx);
         let (loading, busy) = (repo.selection.diff_loading, repo.busy);
         let trusted = repo.repository.trusted;
-        let note = |text: String| {
-            div()
-                .p_3()
-                .text_color(palette.muted)
-                .child(text)
-                .into_any_element()
+        let note = |icon: &str, title: String, text: String| {
+            empty_state(icon, title, text, palette).into_any_element()
         };
         let Some(diff) = repo.selection.diff.clone() else {
             return if loading {
-                note(t!("detail.loading").into_owned())
+                note("fetch", String::new(), t!("detail.loading").into_owned())
             } else {
                 div().into_any_element()
             };
@@ -434,39 +414,102 @@ impl Render for DiffPane {
         self.sync(&diff, split, cx);
 
         let path = diff.new_path.as_ref().or(diff.old_path.as_ref());
+        let change = match (&diff.old_path, &diff.new_path) {
+            (None, _) => Change::Added,
+            (_, None) => Change::Deleted,
+            (Some(old), Some(new)) if old != new => Change::Renamed,
+            _ => Change::Modified,
+        };
+        // The inline or split choice, as two segments.
+        let segment = |id: &'static str, icon: &str, label: String, on: bool| {
+            h_flex()
+                .id(id)
+                .h(px(22.))
+                .px(px(10.))
+                .gap(px(6.))
+                .rounded(px(4.))
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(if on {
+                    palette.text
+                } else {
+                    palette.text_tertiary
+                })
+                .when(on, |segment| {
+                    segment
+                        .bg(palette.bg_elevated)
+                        .border_1()
+                        .border_color(palette.border_strong)
+                })
+                .when(!on, |segment| {
+                    segment.cursor_pointer().on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(crate::actions::ToggleDiffView), cx)
+                    })
+                })
+                .child(ic(
+                    icon,
+                    12.,
+                    if on {
+                        palette.text
+                    } else {
+                        palette.text_tertiary
+                    },
+                ))
+                .child(label)
+        };
         let header = h_flex()
             .flex_none()
-            .px_3()
-            .py_1()
+            .h(px(34.))
+            .pl_3()
+            .pr_2()
             .gap_2()
             .border_b_1()
             .border_color(palette.border)
+            .child(status_mark(change, false, palette).font_family(mono.clone()))
             .child(
                 div()
                     .flex_1()
                     .truncate()
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
                     .child(path.map(ToString::to_string).unwrap_or_default()),
             )
             .child(
-                Button::new("diff-view")
-                    .xsmall()
-                    .ghost()
-                    .label(if split {
-                        t!("diff.show_inline").into_owned()
-                    } else {
-                        t!("diff.show_split").into_owned()
-                    })
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(crate::actions::ToggleDiffView), cx)
-                    }),
+                h_flex()
+                    .flex_none()
+                    .p(px(2.))
+                    .rounded(px(6.))
+                    .bg(palette.bg_sunken)
+                    .border_1()
+                    .border_color(palette.border)
+                    .child(segment(
+                        "diff-inline",
+                        "inline",
+                        t!("settings.diff_inline").into_owned(),
+                        !split,
+                    ))
+                    .child(segment(
+                        "diff-split",
+                        "split",
+                        t!("settings.diff_split").into_owned(),
+                        split,
+                    )),
             );
 
         let body = match diff.kind {
-            DiffKind::Binary { old_size, new_size } => {
-                note(t!("detail.binary", old = old_size, new = new_size).into_owned())
+            DiffKind::Binary { old_size, new_size } => note(
+                "file",
+                t!("detail.binary_title").into_owned(),
+                t!("detail.binary", old = old_size, new = new_size).into_owned(),
+            ),
+            DiffKind::ModeOnly => note(
+                "check",
+                t!("detail.unchanged").into_owned(),
+                t!("detail.mode_only").into_owned(),
+            ),
+            _ if diff.hunks.is_empty() => {
+                note("check", t!("detail.unchanged").into_owned(), String::new())
             }
-            DiffKind::ModeOnly => note(t!("detail.mode_only").into_owned()),
-            _ if diff.hunks.is_empty() => note(t!("detail.unchanged").into_owned()),
             _ => {
                 // A cut diff ends mid-hunk, so its parts cannot be applied.
                 let cut = matches!(diff.kind, DiffKind::TooLarge { .. });
@@ -549,13 +592,18 @@ impl Render for DiffPane {
                         let repo = self.repo.clone();
                         Some(
                             h_flex()
-                                .px_3()
-                                .py_1()
-                                .gap_3()
+                                .flex_none()
+                                .h(px(36.))
+                                .pl_3()
+                                .pr_2()
+                                .gap_2()
+                                .bg(palette.warning_subtle)
                                 .border_b_1()
                                 .border_color(palette.border)
+                                .text_size(px(12.))
+                                .child(ic("info", 14., palette.warning))
                                 .child(
-                                    div().flex_1().text_color(palette.muted).child(
+                                    div().flex_1().child(
                                         t!(
                                             "detail.too_large",
                                             lines = lines,
@@ -584,21 +632,31 @@ impl Render for DiffPane {
                     };
                     let bar = h_flex()
                         .flex_none()
-                        .px_3()
-                        .py_1()
-                        .gap_2()
+                        .h(px(36.))
+                        .pl_3()
+                        .pr_2()
+                        .gap(px(6.))
+                        .bg(palette.accent_subtle)
                         .border_b_1()
                         .border_color(palette.border)
-                        .child(div().flex_1().text_color(palette.muted).child(
-                            t!("diff.lines_selected", count = self.picked.len()).into_owned(),
-                        ));
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(
+                                    t!("diff.lines_selected", count = self.picked.len())
+                                        .into_owned(),
+                                ),
+                        )
+                        .child(kbd(t!("diff.space").into_owned(), palette));
                     let bar = if origin == Origin::Unstaged {
                         bar.child(
-                            act("stage-lines", t!("diff.stage_lines").into_owned()).on_click(
-                                cx.listener(|this, _, _, cx| {
+                            act("stage-lines", t!("diff.stage_lines").into_owned())
+                                .primary()
+                                .on_click(cx.listener(|this, _, _, cx| {
                                     this.toggle_picked(cx);
-                                }),
-                            ),
+                                })),
                         )
                         .child(
                             act("discard-lines", t!("diff.discard_lines").into_owned())
@@ -609,11 +667,11 @@ impl Render for DiffPane {
                         )
                     } else {
                         bar.child(
-                            act("unstage-lines", t!("diff.unstage_lines").into_owned()).on_click(
-                                cx.listener(|this, _, _, cx| {
+                            act("unstage-lines", t!("diff.unstage_lines").into_owned())
+                                .primary()
+                                .on_click(cx.listener(|this, _, _, cx| {
                                     this.toggle_picked(cx);
-                                }),
-                            ),
+                                })),
                         )
                     };
                     bar.child(
@@ -639,7 +697,7 @@ impl Render for DiffPane {
 
         v_flex()
             .size_full()
-            .text_sm()
+            .bg(palette.bg_app)
             .child(header)
             .child(div().flex_1().overflow_hidden().child(body))
             .into_any_element()
@@ -690,10 +748,12 @@ fn hunk_row(
     h_flex()
         .h(px(LINE_HEIGHT))
         .w_full()
-        .px_2()
-        .gap_2()
-        .bg(palette.hunk)
-        .text_color(palette.muted)
+        .pl(px(10.))
+        .pr_2()
+        .gap(px(6.))
+        .bg(palette.diff_hunk)
+        .text_size(px(11.))
+        .text_color(palette.text_secondary)
         .child(div().flex_1().truncate().child(format!(
             "@@ -{},{} +{},{} @@ {}",
             hunk.old_start, hunk.old_len, hunk.new_start, hunk.new_len, hunk.section
@@ -724,21 +784,39 @@ fn line_cell(
         .flex_1()
         .overflow_hidden();
     let Some(l) = l else {
-        return cell.bg(palette.hunk.opacity(0.4)).into_any_element();
+        return cell.bg(palette.bg_panel).into_any_element();
     };
     let line = &diff.hunks[h].lines[l];
-    let (sign, color) = match line.kind {
-        LineKind::Add => ("+", Some(palette.added)),
-        LineKind::Remove => ("-", Some(palette.removed)),
-        LineKind::Context => (" ", None),
+    let (sign, color, gutter, sign_color) = match line.kind {
+        LineKind::Add => (
+            "+",
+            Some(palette.diff_added),
+            Some(palette.diff_added_gutter),
+            palette.success,
+        ),
+        LineKind::Remove => (
+            "-",
+            Some(palette.diff_removed),
+            Some(palette.diff_removed_gutter),
+            palette.danger,
+        ),
+        LineKind::Context => (" ", None, None, palette.text_tertiary),
+    };
+    let gutter = if picked {
+        Some(palette.diff_picked)
+    } else {
+        gutter
     };
     let number = |n: Option<u32>| {
-        div()
-            .w(px(44.))
+        h_flex()
+            .w(px(38.))
+            .h_full()
             .flex_none()
-            .px_1()
-            .text_right()
-            .text_color(palette.muted)
+            .pr(px(6.))
+            .justify_end()
+            .text_size(px(11.))
+            .text_color(palette.text_tertiary)
+            .when_some(gutter, |cell, color| cell.bg(color))
             .child(n.map(|n| n.to_string()).unwrap_or_default())
     };
     let text = display(line);
@@ -754,7 +832,7 @@ fn line_cell(
         .unwrap_or_default();
     let selectable = can_edit && line.kind != LineKind::Context;
     cell.when_some(color, |cell, color| cell.bg(color))
-        .when(picked, |cell| cell.bg(palette.picked))
+        .when(picked, |cell| cell.bg(palette.diff_picked))
         .when(selectable, |cell| {
             cell.cursor_pointer()
                 .on_mouse_down(
@@ -771,7 +849,14 @@ fn line_cell(
         })
         .when(numbers[0], |cell| cell.child(number(line.old_no)))
         .when(numbers[1], |cell| cell.child(number(line.new_no)))
-        .child(div().w(px(14.)).flex_none().child(sign))
+        .child(
+            div()
+                .w(px(18.))
+                .flex_none()
+                .text_center()
+                .text_color(sign_color)
+                .child(sign),
+        )
         .child(
             div()
                 .flex_1()

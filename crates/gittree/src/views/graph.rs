@@ -1,19 +1,22 @@
 use std::ops::Range;
 
 use gittree_core::model::{Head, RefKind};
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::skeleton::Skeleton;
-use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    App, Context, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement, KeyDownEvent,
+    App, Context, Entity, FocusHandle, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, Render, ScrollStrategy, SharedString, StatefulInteractiveElement, Styled,
     TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use rust_i18n::t;
 
-use super::graph_element::{ROW_HEIGHT, graph_cell};
+use super::graph_element::{LANE_WIDTH, ROW_HEIGHT, graph_cell};
+use super::ui::{RefLabel, badge, big_icon, caption, empty_state, ref_label};
+use crate::actions::FocusChanges;
 use crate::local_time;
+use crate::palette::{Palette, palette};
 use crate::repo_state::{RepoEvent, RepoState, Scope};
 
 /// Rows a Page Up or Page Down moves.
@@ -59,56 +62,33 @@ impl GraphView {
     }
 }
 
-/// A small label for a branch, tag or HEAD on a graph row.
-fn ref_label(text: SharedString, background: Hsla, foreground: Hsla) -> impl IntoElement {
-    div()
-        .flex_none()
-        .px_1p5()
-        .rounded_sm()
-        .text_xs()
-        .bg(background)
-        .text_color(foreground)
-        .child(text)
-}
-
-fn ref_labels(repo: &RepoState, oid: &str, cx: &App) -> Vec<gpui_kit::AnyElement> {
-    let theme = cx.theme();
+fn ref_labels(repo: &RepoState, oid: &str, p: Palette) -> Vec<gpui_kit::AnyElement> {
     let mut labels = Vec::new();
     if matches!(&repo.repository.head, Head::Detached(head) if &**head == oid) {
-        labels.push(
-            ref_label(
-                t!("graph.head").into_owned().into(),
-                theme.primary,
-                theme.primary_foreground,
-            )
-            .into_any_element(),
-        );
+        let text = t!("graph.head").into_owned();
+        labels.push(ref_label(RefLabel::Head, text, p).into_any_element());
     }
     for &ix in repo.refs_at.get(oid).into_iter().flatten() {
         let r = &repo.refs[ix];
-        // Each kind looks different, and the current branch stands out.
-        let (background, foreground) = match r.kind {
-            RefKind::Local if r.is_current => (theme.primary, theme.primary_foreground),
-            RefKind::Local => (theme.success.opacity(0.25), theme.foreground),
-            RefKind::Remote => (theme.muted, theme.muted_foreground),
-            RefKind::Tag => (theme.warning.opacity(0.3), theme.foreground),
-            RefKind::Stash => (theme.info.opacity(0.3), theme.foreground),
+        let kind = match r.kind {
+            RefKind::Local if r.is_current => RefLabel::Current,
+            RefKind::Local => RefLabel::Local,
+            RefKind::Remote => RefLabel::Remote,
+            RefKind::Tag => RefLabel::Tag,
+            RefKind::Stash => RefLabel::Stash,
         };
         let name: SharedString = r.short_name().to_owned().into();
-        labels.push(ref_label(name, background, foreground).into_any_element());
+        labels.push(ref_label(kind, name, p).into_any_element());
     }
     labels
 }
 
+/// The widths of the author, date and hash columns.
+const COLUMNS: [f32; 3] = [96., 112., 60.];
+
 impl Render for GraphView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (background, muted, selected_bg, match_bg) = (
-            theme.background,
-            theme.muted_foreground,
-            theme.list_active,
-            theme.warning.opacity(0.12),
-        );
+        let p = palette(cx);
         let repo = self.repo.read(cx);
 
         if let Some(error) = &repo.log_error {
@@ -116,13 +96,21 @@ impl Render for GraphView {
             let repo = self.repo.clone();
             return v_flex()
                 .size_full()
+                .bg(p.bg_app)
                 .items_center()
                 .justify_center()
-                .gap_2()
-                .child(t!("graph.load_failed").into_owned())
-                .child(div().text_color(muted).child(message))
+                .gap_3()
+                .child(big_icon("warning", p.danger, p.danger_subtle, p))
+                .child(
+                    div()
+                        .text_size(px(15.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(t!("graph.load_failed").into_owned()),
+                )
+                .child(div().text_color(p.text_secondary).child(message))
                 .child(
                     Button::new("retry-log")
+                        .primary()
                         .label(t!("graph.retry").into_owned())
                         .on_click(move |_, _, cx| {
                             repo.update(cx, |repo, cx| repo.refresh(Scope::All, cx))
@@ -130,21 +118,67 @@ impl Render for GraphView {
                 )
                 .into_any_element();
         }
+
+        // At least three lanes wide, so the column title fits.
+        let lanes = repo.history.lanes.max(3);
+        let lane_width = LANE_WIDTH * lanes as f32;
+        let header = h_flex()
+            .flex_none()
+            .h(px(26.))
+            .pl_2()
+            .pr_3()
+            .gap_2()
+            .border_b_1()
+            .border_color(p.border)
+            .child(
+                div()
+                    .w(lane_width)
+                    .flex_none()
+                    .overflow_hidden()
+                    .child(caption(t!("graph.col_graph").into_owned(), p)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .child(caption(t!("graph.col_description").into_owned(), p)),
+            )
+            .children(
+                ["graph.col_author", "graph.col_date", "graph.col_commit"]
+                    .into_iter()
+                    .zip(COLUMNS)
+                    .map(|(key, width)| {
+                        div()
+                            .w(px(width))
+                            .flex_none()
+                            .child(caption(t!(key).into_owned(), p))
+                    }),
+            );
+
         if repo.loading && repo.history.commits.is_empty() {
             // Skeleton rows until the first batch arrives.
             return v_flex()
                 .size_full()
-                .p_2()
-                .gap_2()
-                .children((0..12).map(|n| {
-                    Skeleton::new()
-                        .h(px(16.))
-                        .w(px(260. + 37. * (n % 5) as f32))
+                .bg(p.bg_app)
+                .child(header)
+                .children((0..14).map(|n| {
+                    h_flex()
+                        .h(ROW_HEIGHT)
+                        .px_3()
+                        .gap_3()
+                        .opacity(1. - n as f32 * 0.06)
+                        .child(Skeleton::new().size(px(8.)).rounded_full())
+                        .child(
+                            Skeleton::new()
+                                .h(px(10.))
+                                .w(px(220. + 37. * (n % 5) as f32)),
+                        )
+                        .child(div().flex_1())
+                        .child(Skeleton::new().h(px(10.)).w(px(80.)))
+                        .child(Skeleton::new().h(px(10.)).w(px(60.)))
                 }))
                 .into_any_element();
         }
 
-        let lanes = repo.history.lanes;
         let handle = self.repo.clone();
         let focus = self.focus.clone();
         let list = uniform_list(
@@ -153,56 +187,74 @@ impl Render for GraphView {
             cx.processor(move |this, range: Range<usize>, _, cx| {
                 let repo = this.repo.read(cx);
                 let selected = repo.selected_row();
+                let searching = !repo.search.query.trim().is_empty() && !repo.search.running;
                 range
                     .map(|ix| {
                         let commit = &repo.history.commits[ix];
                         let is_match = repo.search.matches.binary_search(&ix).is_ok();
+                        let is_selected = selected == Some(ix);
                         let (handle, focus) = (handle.clone(), focus.clone());
+                        let cell = |width: f32, color, text: SharedString| {
+                            div()
+                                .w(px(width))
+                                .flex_none()
+                                .truncate()
+                                .text_size(px(12.))
+                                .text_color(color)
+                                .child(text)
+                        };
                         h_flex()
                             .id(ix)
                             .h(ROW_HEIGHT)
                             .w_full()
-                            .px_2()
+                            .pl_2()
+                            .pr_3()
                             .gap_2()
+                            .when(!is_selected, |row| row.hover(|style| style.bg(p.bg_hover)))
                             .when_some(
-                                (selected == Some(ix))
-                                    .then_some(selected_bg)
-                                    .or(is_match.then_some(match_bg)),
+                                is_selected
+                                    .then_some(p.bg_selected)
+                                    .or(is_match.then_some(p.warning_subtle)),
                                 |row, color| row.bg(color),
                             )
+                            // While a search is on, rows that do not match step back.
+                            .when(searching && !is_match && !is_selected, |row| {
+                                row.opacity(0.45)
+                            })
                             .on_click(move |_, window, cx| {
                                 focus.focus(window, cx);
                                 handle.update(cx, |repo, cx| repo.select_row(ix, cx));
                             })
-                            .child(graph_cell(repo.history.rows[ix].clone(), lanes, background))
-                            .children(ref_labels(repo, &commit.oid, cx))
+                            .child(graph_cell(
+                                repo.history.rows[ix].clone(),
+                                lanes,
+                                p.lanes,
+                                p.bg_app,
+                            ))
+                            .children(ref_labels(repo, &commit.oid, p))
                             .child(
                                 div()
                                     .flex_1()
                                     .truncate()
                                     .child(SharedString::from(commit.summary.clone())),
                             )
+                            .child(cell(
+                                COLUMNS[0],
+                                p.text_secondary,
+                                SharedString::from(commit.author_name.clone()),
+                            ))
+                            .child(cell(
+                                COLUMNS[1],
+                                p.text_secondary,
+                                local_time(commit.author_time).into(),
+                            ))
                             .child(
-                                div()
-                                    .w(px(130.))
-                                    .flex_none()
-                                    .truncate()
-                                    .text_color(muted)
-                                    .child(SharedString::from(commit.author_name.clone())),
-                            )
-                            .child(
-                                div()
-                                    .w(px(118.))
-                                    .flex_none()
-                                    .text_color(muted)
-                                    .child(local_time(commit.author_time)),
-                            )
-                            .child(
-                                div()
-                                    .w(px(60.))
-                                    .flex_none()
-                                    .text_color(muted)
-                                    .child(commit.oid[..7.min(commit.oid.len())].to_string()),
+                                cell(
+                                    COLUMNS[2],
+                                    p.text_tertiary,
+                                    commit.oid[..7.min(commit.oid.len())].to_string().into(),
+                                )
+                                .font_family(mono(cx)),
                             )
                     })
                     .collect()
@@ -214,53 +266,67 @@ impl Render for GraphView {
         // The work in progress sits above the newest commit (FR-GRAPH-04).
         let wip = repo.wip_visible().then(|| {
             let (handle, focus) = (self.repo.clone(), self.focus.clone());
-            let text = if repo.status.is_empty() {
-                t!("graph.wip_none").into_owned()
-            } else {
-                t!("graph.wip", count = repo.status.len()).into_owned()
-            };
+            let clean = repo.status.is_empty();
+            let selected = repo.selection.wip;
             h_flex()
                 .id("wip")
                 .h(ROW_HEIGHT)
                 .flex_none()
                 .w_full()
-                .px_2()
+                .pl_2()
+                .pr_3()
                 .gap_2()
                 .cursor_pointer()
-                .when(repo.selection.wip, |row| row.bg(selected_bg))
+                .when(selected, |row| row.bg(p.bg_selected))
+                .when(!selected, |row| row.hover(|style| style.bg(p.bg_hover)))
                 .on_click(move |_, window, cx| {
                     focus.focus(window, cx);
                     handle.update(cx, |repo, cx| repo.select_wip(cx));
                 })
                 .child(
-                    div()
-                        .size(px(10.))
-                        .flex_none()
-                        .rounded_full()
-                        .border_1()
-                        .border_color(muted),
+                    h_flex().w(lane_width).flex_none().child(
+                        div()
+                            .ml(px(3.))
+                            .size(px(10.))
+                            .rounded_full()
+                            .border_2()
+                            .border_dashed()
+                            .border_color(p.text_secondary),
+                    ),
                 )
-                .child(div().flex_1().truncate().child(text))
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(if clean {
+                            t!("graph.wip_none").into_owned()
+                        } else {
+                            t!("graph.wip_title").into_owned()
+                        }),
+                )
+                .when(!clean, |row| {
+                    row.child(badge(
+                        t!("graph.wip_files", count = repo.status.len()).into_owned(),
+                        p,
+                    ))
+                })
                 // Lets the headless tests find and click the row.
                 .test_support()
         });
         let body = if repo.history.commits.is_empty() {
-            v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_1()
-                .child(
-                    div()
-                        .text_lg()
-                        .child(t!("workspace.no_commits_title").into_owned()),
-                )
-                .child(
-                    div()
-                        .text_color(muted)
-                        .child(t!("workspace.no_commits_text").into_owned()),
-                )
-                .into_any_element()
+            empty_state(
+                "commit",
+                t!("workspace.no_commits_title").into_owned(),
+                t!("workspace.no_commits_text").into_owned(),
+                p,
+            )
+            .child(
+                Button::new("show-changes")
+                    .label(t!("graph.show_changes").into_owned())
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(FocusChanges), cx)),
+            )
+            .into_any_element()
         } else {
             list.into_any_element()
         };
@@ -268,12 +334,24 @@ impl Render for GraphView {
         v_flex()
             .id("graph-panel")
             .size_full()
-            .bg(background)
-            .text_sm()
+            .bg(p.bg_app)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
+            .when(!repo.history.commits.is_empty(), |panel| {
+                panel.child(header)
+            })
             .children(wip)
             .child(div().flex_1().overflow_hidden().child(body))
             .into_any_element()
     }
+}
+
+/// The font for hashes, line numbers and code.
+pub fn mono(cx: &App) -> SharedString {
+    crate::app_state::app_state(cx)
+        .read(cx)
+        .settings
+        .diff_font_family
+        .clone()
+        .into()
 }

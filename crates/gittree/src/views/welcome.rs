@@ -4,16 +4,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
+use gpui_kit::component::{Sizable, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
-    AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, Window, div, px,
+    AppContext, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    Render, StatefulInteractiveElement, Styled, Task, Window, div, px,
 };
 use rust_i18n::t;
 
+use super::graph::mono;
+use super::ui::{empty_state, ic};
 use crate::APP_NAME;
-use crate::actions::{InitRepository, OpenRepository};
+use crate::actions::{InitRepository, OpenRepository, OpenSettings};
 use crate::app_state::AppState;
+use crate::app_state::GitCheck;
+use crate::palette::palette;
 
 /// The screen with no repository open: Open, Create and the recent list
 /// (FR-REPO-01, FR-REPO-03, FR-REPO-04).
@@ -81,118 +86,303 @@ fn last_opened(time: i64) -> String {
 
 impl Render for WelcomeView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, hover, border) = (theme.muted_foreground, theme.list_hover, theme.border);
-        let recent = self.app.read(cx).recent.repos.clone();
+        let p = palette(cx);
+        let mono = mono(cx);
+        let app = self.app.read(cx);
+        let recent = app.recent.repos.clone();
+        let git = match &app.git {
+            GitCheck::Ready(version) => version.text.replace("git version", "Git"),
+            _ => String::new(),
+        };
 
-        let rows = recent.into_iter().enumerate().map(|(ix, repo)| {
+        // One of the three big actions on the left.
+        let action = |id: &'static str,
+                      icon: &str,
+                      label: String,
+                      hint: String,
+                      key: &str,
+                      primary: bool| {
+            let (foreground, soft) = if primary {
+                (p.on_accent, p.on_accent)
+            } else {
+                (p.text, p.text_tertiary)
+            };
+            h_flex()
+                .id(id)
+                .h(px(52.))
+                .px(px(14.))
+                .gap_3()
+                .rounded(px(10.))
+                .when(primary, |row| {
+                    row.bg(p.accent).hover(|style| style.bg(p.accent_hover))
+                })
+                .when(!primary, |row| {
+                    row.bg(p.bg_elevated)
+                        .border_1()
+                        .border_color(p.border)
+                        .hover(|style| style.bg(p.bg_hover))
+                })
+                .child(ic(
+                    icon,
+                    18.,
+                    if primary {
+                        p.on_accent
+                    } else {
+                        p.text_secondary
+                    },
+                ))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(foreground)
+                                .child(label),
+                        )
+                        .child(div().text_size(px(12.)).text_color(soft).child(hint)),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(soft)
+                        .child(key.to_owned()),
+                )
+        };
+        let left = v_flex()
+            .w(px(400.))
+            .h_full()
+            .flex_none()
+            .p(px(40.))
+            .gap(px(28.))
+            .bg(p.bg_panel)
+            .border_r_1()
+            .border_color(p.border)
+            .child(
+                v_flex()
+                    .gap(px(14.))
+                    .child(
+                        h_flex()
+                            .size(px(40.))
+                            .justify_center()
+                            .rounded(px(10.))
+                            .bg(p.accent_subtle)
+                            .child(ic("branch", 22., p.accent)),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(20.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(APP_NAME),
+                            )
+                            .child(
+                                div()
+                                    .text_color(p.text_secondary)
+                                    .child(t!("welcome.tagline").into_owned()),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap(px(10.))
+                    .child(
+                        action(
+                            "open",
+                            "folder",
+                            t!("welcome.open").into_owned(),
+                            t!("welcome.open_hint").into_owned(),
+                            "⌘O",
+                            true,
+                        )
+                        .cursor_pointer()
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(OpenRepository), cx)
+                        }),
+                    )
+                    // Clone arrives with the remotes milestone.
+                    .child(
+                        action(
+                            "clone",
+                            "clone",
+                            t!("welcome.clone").into_owned(),
+                            t!("welcome.clone_hint").into_owned(),
+                            "⇧⌘O",
+                            false,
+                        )
+                        .opacity(0.45),
+                    )
+                    .child(
+                        action(
+                            "init",
+                            "plus",
+                            t!("welcome.init").into_owned(),
+                            t!("welcome.init_hint").into_owned(),
+                            "",
+                            false,
+                        )
+                        .cursor_pointer()
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(InitRepository), cx)
+                        }),
+                    ),
+            )
+            .child(div().flex_1())
+            .child(
+                h_flex()
+                    .gap_2()
+                    .text_size(px(12.))
+                    .child(
+                        h_flex()
+                            .id("welcome-settings")
+                            .gap(px(6.))
+                            .cursor_pointer()
+                            .text_color(p.text_secondary)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(OpenSettings), cx)
+                            })
+                            .child(ic("settings", 14., p.text_tertiary))
+                            .child(t!("welcome.settings").into_owned()),
+                    )
+                    .child(div().text_color(p.text_tertiary).child("·"))
+                    .child(
+                        div()
+                            .font_family(mono.clone())
+                            .text_size(px(11.))
+                            .text_color(p.text_tertiary)
+                            .child(git),
+                    ),
+            );
+
+        let rows = recent.iter().enumerate().map(|(ix, repo)| {
             let missing = self.missing.contains(&repo.path);
             let path = repo.path.clone();
             let app = self.app.clone();
             let row = h_flex()
                 .id(("recent", ix))
+                .group("recent-row")
                 .w_full()
-                .px_3()
-                .py_2()
+                .h(px(52.))
+                .px(px(14.))
                 .gap_3()
-                .rounded_md()
+                .rounded(px(8.))
+                .child(
+                    h_flex()
+                        .flex_none()
+                        .size(px(32.))
+                        .justify_center()
+                        .rounded(px(8.))
+                        .bg(p.bg_elevated)
+                        .border_1()
+                        .border_color(p.border)
+                        .child(if missing {
+                            ic("warning", 16., p.warning)
+                        } else {
+                            ic("folder", 16., p.text_secondary)
+                        }),
+                )
                 .child(
                     v_flex()
                         .flex_1()
                         .overflow_hidden()
-                        .child(div().truncate().child(repo.name.clone()))
+                        .when(missing, |text| text.opacity(0.55))
                         .child(
                             div()
                                 .truncate()
-                                .text_sm()
-                                .text_color(muted)
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(repo.name.clone()),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .font_family(mono.clone())
+                                .text_size(px(11.))
+                                .text_color(p.text_tertiary)
                                 .child(repo.path.display().to_string()),
                         ),
                 );
+            let remove = {
+                let (app, path) = (app.clone(), path.clone());
+                Button::new(("remove", ix))
+                    .small()
+                    .ghost()
+                    .label(t!("welcome.remove").into_owned())
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        app.update(cx, |app, cx| app.remove_recent(&path, cx));
+                    })
+            };
             if missing {
-                row.opacity(0.5)
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(t!("welcome.missing").into_owned()),
-                    )
-                    .child(
-                        Button::new(("remove", ix))
-                            .small()
-                            .ghost()
-                            .label(t!("welcome.remove").into_owned())
-                            .on_click(move |_, _, cx| {
-                                app.update(cx, |app, cx| app.remove_recent(&path, cx));
-                            }),
-                    )
+                row.child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(p.warning)
+                        .child(t!("welcome.missing").into_owned()),
+                )
+                .child(remove)
             } else {
                 row.cursor_pointer()
-                    .hover(move |style| style.bg(hover))
+                    .hover(|style| style.bg(p.bg_hover))
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(muted)
+                            .text_size(px(12.))
+                            .text_color(p.text_secondary)
                             .child(last_opened(repo.last_opened)),
+                    )
+                    .child(
+                        div()
+                            .invisible()
+                            .group_hover("recent-row", |style| style.visible())
+                            .child(remove),
                     )
                     .on_click(move |_, _, cx| {
                         app.update(cx, |app, cx| app.open(path.clone(), cx));
                     })
             }
         });
-        let has_recent = !self.app.read(cx).recent.repos.is_empty();
 
-        v_flex()
-            .size_full()
-            .items_center()
-            .pt_16()
-            .gap_6()
-            .child(div().text_3xl().child(APP_NAME))
-            .child(
-                h_flex()
-                    .gap_3()
-                    .child(
-                        Button::new("open")
-                            .primary()
-                            .label(t!("welcome.open").into_owned())
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(OpenRepository), cx)
-                            }),
-                    )
-                    .child(
-                        Button::new("init")
-                            .label(t!("welcome.init").into_owned())
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(InitRepository), cx)
-                            }),
-                    ),
+        let right = if recent.is_empty() {
+            empty_state(
+                "folder",
+                t!("welcome.no_recent_title").into_owned(),
+                t!("welcome.no_recent").into_owned(),
+                p,
             )
-            .child(if has_recent {
-                v_flex()
-                    .id("recent-list")
-                    .w(px(560.))
-                    .flex_1()
-                    .mb_6()
-                    .gap_1()
-                    .child(
-                        div()
-                            .pb_2()
-                            .border_b_1()
-                            .border_color(border)
-                            .text_sm()
-                            .text_color(muted)
-                            .child(t!("welcome.recent").into_owned()),
-                    )
-                    .children(rows)
-                    .overflow_y_scrollbar()
-                    .into_any_element()
-            } else {
-                div()
-                    .w(px(420.))
-                    .text_center()
-                    .text_color(muted)
-                    .child(t!("welcome.no_recent").into_owned())
-                    .into_any_element()
-            })
+            .into_any_element()
+        } else {
+            v_flex()
+                .id("recent-list")
+                .size_full()
+                .p(px(40.))
+                .gap_4()
+                .child(
+                    h_flex()
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(px(15.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(t!("welcome.recent").into_owned()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(p.text_tertiary)
+                                .child(t!("welcome.newest_first").into_owned()),
+                        ),
+                )
+                .child(v_flex().gap(px(2.)).children(rows))
+                .overflow_y_scrollbar()
+                .into_any_element()
+        };
+        h_flex()
+            .size_full()
+            .items_start()
+            .bg(p.bg_app)
+            .text_size(px(13.))
+            .child(left)
+            .child(div().flex_1().h_full().overflow_hidden().child(right))
     }
 }

@@ -19,16 +19,28 @@ errors:
 
 git_check:
   title: "Safi Git Tree needs Git"
-  found: "Found: %{version}"
-  required: "Git %{version} or newer is required."
+  found_label: "Found"
+  found_none: "Nothing on your PATH"
+  required_label: "Required"
+  required: "Git %{version} or newer"
+  path_help: "Leave empty to use the Git on your PATH."
+  install_with: "Install with"
   path_label: "Path to the Git program"
   retry: "Retry"
 
 welcome:
+  tagline: "A native Git client. Everything is done by the Git on your Mac."
   open: "Open repository"
+  open_hint: "Pick a folder that has a .git inside"
+  clone: "Clone repository"
+  clone_hint: "From an HTTPS or SSH URL"
   init: "Create repository"
+  init_hint: "Start a new one in an empty folder"
+  settings: "Settings"
+  newest_first: "Newest first"
+  no_recent_title: "No repositories yet"
   recent: "Recent repositories"
-  no_recent: "No repositories yet. Open a folder that has one, or drop it on this window."
+  no_recent: "Open a folder that has one, or drop it on this window. The ones you open will be listed here."
   remove: "Remove"
   missing: "Folder not found"
   today: "Today"
@@ -41,6 +53,15 @@ workspace:
   no_commits_title: "No commits yet"
   no_commits_text: "Make the first commit and it will show here."
   detached: "Detached at %{oid}"
+  detached_banner: "You are on a detached HEAD. New commits here belong to no branch."
+
+toolbar:
+  fetch: "Fetch"
+  pull: "Pull"
+  push: "Push"
+  branch: "Branch"
+  stash: "Stash"
+  working: "Working…"
 
 not_a_repository:
   title: "Not a repository"
@@ -122,7 +143,14 @@ graph:
   retry: "Retry"
   load_failed: "The history could not be loaded."
   head: "HEAD"
-  wip: "Uncommitted changes in %{count} files"
+  wip_title: "Uncommitted changes"
+  wip_files: "%{count} files"
+  col_graph: "GRAPH"
+  col_description: "DESCRIPTION"
+  col_author: "AUTHOR"
+  col_date: "DATE"
+  col_commit: "COMMIT"
+  show_changes: "Show changes"
   wip_none: "No uncommitted changes"
 
 sidebar:
@@ -141,7 +169,8 @@ detail:
   parents: "Parents"
   files: "%{count} changed files"
   no_files: "This commit changed no files."
-  binary: "Binary file. %{old} bytes before, %{new} bytes after."
+  binary_title: "Binary file"
+  binary: "%{old} bytes before, %{new} bytes after."
   mode_only: "Only the file mode changed."
   unchanged: "No changes to show."
   too_large: "This diff has %{lines} lines. Showing the first %{shown}."
@@ -154,8 +183,9 @@ search:
   none: "No commits match."
 
 staging:
-  unstaged: "Unstaged (%{count})"
-  staged: "Staged (%{count})"
+  unstaged: "Unstaged · %{count}"
+  staged: "Staged · %{count}"
+  nothing_staged: "Nothing staged yet. Stage files, hunks or lines to commit them."
   stage: "Stage"
   unstage: "Unstage"
   discard: "Discard"
@@ -179,6 +209,7 @@ diff:
   unstage_lines: "Unstage lines"
   discard_lines: "Discard lines"
   clear_lines: "Clear"
+  space: "Space"
 
 commit:
   summary: "Summary"
@@ -186,6 +217,8 @@ commit:
   amend: "Amend last commit"
   amend_pushed: "This commit is already on the remote. Amending it will need a force-push."
   action: "Commit"
+  committing: "Committing…"
+  too_long: "Long summaries are cut off in most Git tools. You can still commit."
   amend_action: "Amend commit"
 
 discard:

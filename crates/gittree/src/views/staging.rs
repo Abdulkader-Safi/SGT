@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
-use gittree_core::model::{Change, RepoPath, StatusEntry};
+use gittree_core::model::{RepoPath, StatusEntry};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::{ActiveTheme, Disableable, Sizable, h_flex, v_flex};
+use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AppContext, ClickEvent, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
@@ -15,8 +15,11 @@ use rust_i18n::t;
 
 use super::dialogs::confirm_destructive;
 use super::diff::DiffPane;
+use super::graph::mono;
+use super::ui::{caption, empty_state, ic, kbd, status_mark};
 use crate::actions::StageSelection;
 use crate::app_state::AppState;
+use crate::palette::palette;
 use crate::repo_state::{Op, RepoEvent, RepoState, discard_paths, entry_paths};
 
 /// Past this many characters the summary counter warns.
@@ -52,21 +55,6 @@ fn join_message(summary: &str, description: &str) -> String {
         summary.to_owned()
     } else {
         format!("{summary}\n\n{description}")
-    }
-}
-
-fn mark(entry: &StatusEntry, staged: bool) -> &'static str {
-    if entry.conflict.is_some() {
-        return "!";
-    }
-    match if staged { entry.index } else { entry.worktree } {
-        Change::Added => "A",
-        Change::Untracked => "?",
-        Change::Deleted => "D",
-        Change::Renamed => "R",
-        Change::Copied => "C",
-        Change::TypeChange => "T",
-        Change::Modified | Change::Unmodified => "M",
     }
 }
 
@@ -349,14 +337,8 @@ impl StagingView {
     }
 
     fn file_list(&self, staged: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = cx.theme();
-        let (muted, hover, selected_bg, border, danger) = (
-            theme.muted_foreground,
-            theme.list_hover,
-            theme.list_active,
-            theme.border,
-            theme.danger,
-        );
+        let p = palette(cx);
+        let mono = mono(cx);
         let repo = self.repo.read(cx);
         let can_change = repo.repository.trusted && !repo.busy;
         let shown = repo.selection.wip_file.clone();
@@ -374,18 +356,13 @@ impl StagingView {
         let all = entries.clone();
         let header = h_flex()
             .flex_none()
-            .px_3()
-            .py_1()
+            .h(px(30.))
+            .pl_3()
+            .pr_2()
             .gap_2()
             .border_b_1()
-            .border_color(border)
-            .child(
-                div()
-                    .flex_1()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(title.into_owned()),
-            )
+            .border_color(p.border)
+            .child(div().flex_1().child(caption(title.to_uppercase(), p)))
             .when(marked_here > 1, |header| {
                 let label = if staged {
                     t!("staging.unstage_selected", count = marked_here)
@@ -438,63 +415,82 @@ impl StagingView {
             };
             let conflicted = entry.conflict.is_some();
             let (click_path, act_key, discard_key) = (entry.path.clone(), key.clone(), key.clone());
+            let lit = is_shown || is_marked;
+            // Row actions show on the selected rows and under the pointer.
+            let actions = |row: gpui_kit::Div| {
+                if lit {
+                    row
+                } else {
+                    row.invisible()
+                        .group_hover("file-row", |style| style.visible())
+                }
+            };
             h_flex()
                 .id((if staged { "staged" } else { "unstaged" }, ix))
-                .px_3()
+                .group("file-row")
+                .h(px(28.))
+                .pl_3()
+                .pr_2()
                 .gap_2()
                 .cursor_pointer()
-                .hover(move |style| style.bg(hover))
-                .when(is_shown || is_marked, |row| row.bg(selected_bg))
+                .when(is_shown, |row| row.bg(p.bg_selected))
+                .when(is_marked && !is_shown, |row| row.bg(p.accent_subtle))
+                .when(!lit, |row| row.hover(|style| style.bg(p.bg_hover)))
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.focus.focus(window, cx);
                     this.click_file(click_path.clone(), staged, event, cx)
                 }))
                 .child(
-                    div()
-                        .w(px(14.))
-                        .flex_none()
-                        .text_color(if conflicted { danger } else { muted })
-                        .child(mark(&entry, staged)),
+                    status_mark(
+                        if staged { entry.index } else { entry.worktree },
+                        conflicted,
+                        p,
+                    )
+                    .font_family(mono.clone()),
                 )
                 .child(div().flex_1().truncate().child(name))
                 .when(conflicted, |row| {
                     row.child(
                         div()
-                            .text_xs()
-                            .text_color(danger)
+                            .text_size(px(12.))
+                            .text_color(p.danger)
                             .child(t!("staging.conflicted").into_owned()),
                     )
                 })
                 .when(!conflicted, |row| {
                     row.child(
-                        Button::new((if staged { "unstage" } else { "stage" }, ix))
-                            .xsmall()
-                            .ghost()
-                            .disabled(!can_change)
-                            .label(if staged {
-                                t!("staging.unstage").into_owned()
-                            } else {
-                                t!("staging.stage").into_owned()
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                let entries = this.acted_on(&act_key, cx);
-                                this.move_files(&entries, staged, cx);
-                            })),
+                        actions(h_flex().flex_none().gap_1()).child(
+                            Button::new((if staged { "unstage" } else { "stage" }, ix))
+                                .xsmall()
+                                .ghost()
+                                .disabled(!can_change)
+                                .label(if staged {
+                                    t!("staging.unstage").into_owned()
+                                } else {
+                                    t!("staging.stage").into_owned()
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    let entries = this.acted_on(&act_key, cx);
+                                    this.move_files(&entries, staged, cx);
+                                })),
+                        ),
                     )
                 })
                 .when(!staged && !conflicted, |row| {
                     row.child(
-                        Button::new(("discard", ix))
-                            .xsmall()
-                            .ghost()
-                            .disabled(!can_change)
-                            .label(t!("staging.discard").into_owned())
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                let entries = this.acted_on(&discard_key, cx);
-                                this.discard_files(entries, window, cx);
-                            })),
+                        actions(h_flex().flex_none()).child(
+                            Button::new(("discard", ix))
+                                .xsmall()
+                                .ghost()
+                                .disabled(!can_change)
+                                .label(t!("staging.discard").into_owned())
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    let entries = this.acted_on(&discard_key, cx);
+                                    this.discard_files(entries, window, cx);
+                                })),
+                        ),
                     )
                 })
         });
@@ -515,87 +511,99 @@ impl StagingView {
 
 impl Render for StagingView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, border, warning, danger) = (
-            theme.muted_foreground,
-            theme.border,
-            theme.warning,
-            theme.danger,
-        );
+        let p = palette(cx);
         let repo = self.repo.read(cx);
         let (busy, trusted, has_commits) = (repo.busy, repo.repository.trusted, repo.has_commits());
         let no_changes = repo.status.is_empty();
+        let nothing_staged = repo.changes(true).next().is_none();
         let conflicts = repo.status.iter().any(|entry| entry.conflict.is_some());
         let pushed = self.amend && repo.head_is_pushed();
         let can_commit = self.can_commit(cx);
         let amend = self.amend;
         let summary_len = self.summary.read(cx).value().trim().chars().count();
+        let too_long = summary_len > SUMMARY_LIMIT;
 
         let changes = if no_changes {
-            v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .gap_1()
-                .p_4()
-                .child(t!("staging.none_title").into_owned())
-                .child(
-                    div()
-                        .text_color(muted)
-                        .child(t!("staging.none_text").into_owned()),
-                )
-                .into_any_element()
+            empty_state(
+                "check",
+                t!("staging.none_title").into_owned(),
+                t!("staging.none_text").into_owned(),
+                p,
+            )
+            .into_any_element()
         } else {
             v_flex()
                 .flex_1()
                 .overflow_hidden()
                 .child(self.file_list(false, cx))
                 .child(self.file_list(true, cx))
+                .when(nothing_staged, |lists| {
+                    lists.child(
+                        h_flex()
+                            .flex_none()
+                            .h(px(28.))
+                            .px_3()
+                            .text_size(px(12.))
+                            .text_color(p.text_tertiary)
+                            .child(t!("staging.nothing_staged").into_owned()),
+                    )
+                })
                 .child(
                     div()
                         .flex_1()
                         .overflow_hidden()
                         .border_t_1()
-                        .border_color(border)
+                        .border_color(p.border)
                         .child(self.diff.clone()),
                 )
                 .into_any_element()
         };
 
-        let note = |text: String, color| div().text_xs().text_color(color).child(text);
+        let note = |icon: &str, text: String, color| {
+            h_flex()
+                .gap(px(6.))
+                .items_start()
+                .text_size(px(12.))
+                .text_color(color)
+                .child(ic(icon, 14., color))
+                .child(div().flex_1().child(text))
+        };
         let commit_box = v_flex()
             .flex_none()
             .p_3()
             .gap_2()
+            .bg(p.bg_panel)
             .border_t_1()
-            .border_color(border)
+            .border_color(p.border)
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Input::new(&self.summary)
-                            .id("commit-summary")
-                            .small()
-                            .flex_1(),
-                    )
-                    .child(
+                Input::new(&self.summary)
+                    .id("commit-summary")
+                    .small()
+                    .suffix(
                         div()
                             .flex_none()
-                            .text_xs()
-                            .text_color(if summary_len > SUMMARY_LIMIT {
-                                warning
-                            } else {
-                                muted
-                            })
+                            .text_size(px(11.))
+                            .text_color(if too_long { p.warning } else { p.text_tertiary })
                             .child(format!("{summary_len}/{SUMMARY_LIMIT}")),
                     ),
             )
             .child(Textarea::new(&self.description).small())
+            .when(too_long, |commit| {
+                commit.child(note("info", t!("commit.too_long").into_owned(), p.warning))
+            })
             .when(conflicts, |commit| {
-                commit.child(note(t!("staging.resolve_first").into_owned(), danger))
+                commit.child(note(
+                    "warning",
+                    t!("staging.resolve_first").into_owned(),
+                    p.danger,
+                ))
             })
             .when(pushed, |commit| {
-                commit.child(note(t!("commit.amend_pushed").into_owned(), warning))
+                commit.child(note(
+                    "warning",
+                    t!("commit.amend_pushed").into_owned(),
+                    p.warning,
+                ))
             })
             .child(
                 h_flex()
@@ -610,13 +618,15 @@ impl Render for StagingView {
                             })),
                     )
                     .child(div().flex_1())
+                    .child(kbd("⌘↵", p))
                     .child(
                         Button::new("commit")
                             .primary()
-                            .small()
                             .loading(busy)
                             .disabled(!can_commit)
-                            .label(if amend {
+                            .label(if busy {
+                                t!("commit.committing").into_owned()
+                            } else if amend {
                                 t!("commit.amend_action").into_owned()
                             } else {
                                 t!("commit.action").into_owned()
@@ -627,7 +637,9 @@ impl Render for StagingView {
 
         v_flex()
             .size_full()
-            .text_sm()
+            .bg(p.bg_panel)
+            .border_l_1()
+            .border_color(p.border)
             .child(
                 v_flex()
                     .id("changes")

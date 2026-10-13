@@ -641,6 +641,9 @@ impl Render for Workspace {
                                 .visible(self.show_sidebar)
                                 .size(px(sidebar_width))
                                 .size_range(px(160.)..px(480.))
+                                // Holds its width: only the graph takes up
+                                // space the other panels leave.
+                                .flex_none()
                                 .child(self.sidebar.clone()),
                         )
                         .child(resizable_panel().child(self.graph.clone()))
@@ -649,6 +652,9 @@ impl Render for Workspace {
                                 .visible(self.show_detail)
                                 .size(px(detail_size))
                                 .size_range(px(240.)..px(900.))
+                                // Holds its width: only the graph takes up
+                                // space the other panels leave.
+                                .flex_none()
                                 .child(right),
                         ),
                 ),

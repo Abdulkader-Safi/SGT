@@ -18,7 +18,8 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M5: merge, rebase, conflicts | Built, 103 tests pass. Waiting on the manual checks listed below |
 | M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
-| M8 to M10 | Not started |
+| M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
+| M9 and M10 | Not started |
 | M11: MCP server | Step 1 built: the server and five tools. See below |
 
 ## M0: de-risk
@@ -438,3 +439,39 @@ The owner asked for the app to run on Windows and Linux, checked in CI. They wer
 ### CI result
 
 All three systems pass fmt, clippy and every test as of commit `Port step 4`. Getting there found one real bug on macOS: the askpass helper dropped an answer when the app replied before the helper had closed its side of the socket.
+
+## M8: hardening and packaging
+
+### Done
+
+- Hard-coded strings: a sweep of every multi-word literal in `crates/gittree/src` found only log messages, test data and the three install commands in `platform`. Nothing to move.
+- Contrast: `palette::tests::text_meets_the_contrast_rule_in_both_themes` checks every text colour against every surface it sits on, in both themes, at 4.5:1. It failed on the design's values, so some tokens moved (listed below).
+- Reduce motion: the kit reads the system setting when it starts, and the app has no animation of its own.
+- Network: the app's dependency tree has no HTTP client. The `http` crate is there only for the types GPUI's unused client interface names. Our own code opens one socket, the askpass listener.
+- Crash safety: `a_kill_in_the_middle_of_an_action_leaves_a_repository_git_can_use` stops between an action and its journal entry. The repository passes `git fsck`, the snapshot ref is still there, and the next action is journaled and undone as usual.
+- Packaging: `cargo bundle --release --bin gittree` in `crates/gittree` makes `Safi Git Tree.app` (34 MB, limit 40) and a 10 MB disk image. The binary starts from the bundle.
+- `LICENSE` (Apache-2.0), `NOTICE`, and `deny.toml`. `cargo deny check licenses` passes.
+- The README covers the `refs/gittree/` refs, the `.git/gittree/` folder, the data folders on each system, and packaging.
+
+### Decisions
+
+- The bundle was 60 MB with the kit's 35 grammars. It now builds only the 19 that `language_for` names, with link-time optimisation and stripped symbols.
+- The app icon is drawn for the project: `assets/app-icon/icon.svg`, from which `icon.icns` is made with `rsvg-convert` and `iconutil`.
+- The bundle identifier is `io.github.abdulkader-safi.sgt`.
+- The orphan snapshot a crash leaves behind is not listed in Snapshots and is not pruned. It can be read with Git.
+
+### Colour tokens changed for contrast
+
+- Tertiary text: dark `6B7380` to `8A92A0`, light `8A919E` to `5E6572`. In the light theme it is now close to secondary text.
+- A new `accent_fill` (dark `2F6FE4`) sits under white text, on primary buttons and the current-branch label. `accent` stays as the colour for accent text. White on the old dark accent was 3.2:1.
+- Light accent `2563EB` to `2160E6`, light warning `9A6700` to `946300`.
+- Three light lane colours are darker (orange, teal, yellow), and avatar initials are dark on the dark theme's lanes.
+- The Figma file still has the old values.
+
+### Still needs a check by hand
+
+- The bench on the big repository. It measures a visible window, and the run on 2026-10-13 hung because the window was not being drawn.
+- The new colours by eye, in both themes.
+- Launching `Safi Git Tree.app` from Finder. The app is not signed, so the first launch needs a right-click and "Open".
+- A network monitor run while browsing, to confirm what the dependency check says.
+- `tree-sitter-graphql` has no licence field in its manifest (its LICENSE file is MIT). `cargo deny` warns about it. It comes in through the kit even though the app does not use that grammar.

@@ -7,3 +7,9 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.97.1"
+
+[profile.release]
+# The bundle must stay under 40 MB (NFR-07).
+strip = true
+lto = "fat"
+codegen-units = 1

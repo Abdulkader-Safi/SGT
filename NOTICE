@@ -1,0 +1,11 @@
+Safi Git Tree (SGT)
+Copyright 2026 Abdulkader Safi
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+This product is built on GPUI and GPUI Kit, both under the Apache License,
+Version 2.0. The licences of every Rust crate it links are checked by
+`cargo deny check licenses` against the list in deny.toml.
+
+21 of the interface icons in crates/gittree/assets/icons come from the
+Reicon icon set. The others were drawn for this project.

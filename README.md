@@ -26,7 +26,7 @@ Early development. What works today:
 - The view updates by itself when the repository changes on disk.
 - Settings, light and dark themes, and the window layout restored at launch.
 
-Not built yet: packaging as an app bundle, blame and file history, worktrees and agent sessions, AI helpers, pull requests. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
+Not built yet: blame and file history, worktrees and agent sessions, AI helpers, pull requests. `docs/spec/06-build-spec.md` has the full plan and `PROGRESS.md` tracks where it stands.
 
 ## Requirements
 
@@ -68,9 +68,9 @@ A repository that SGT did not create is opened read-only until you press "Trust 
 
 ## What it writes, and where
 
-- Settings, the recent list, the session and the trust list: `~/Library/Application Support/Safi Git Tree/`
-- The log: `~/Library/Logs/Safi Git Tree/gittree.log`
-- Inside a repository, once undo is built: snapshot refs under `refs/gittree/snapshots/` and a journal in `.git/gittree/`
+- Settings, the recent list, the session and the trust list: `~/Library/Application Support/Safi Git Tree/` on macOS, `%APPDATA%\Safi Git Tree\` on Windows, `~/.local/share/Safi Git Tree/` on Linux
+- The log: `~/Library/Logs/Safi Git Tree/gittree.log` on macOS, and `logs/gittree.log` in the app's local data folder elsewhere
+- Inside a repository: snapshot refs under `refs/gittree/snapshots/`, and a journal with file backups in `.git/gittree/`. Undo and the snapshot list read them. Git never pushes or fetches these refs unless you name them, and deleting both removes every trace of the app from a repository. Entries older than 30 days, or beyond the newest 200, are removed when a repository opens.
 
 It never writes your global Git config, `~/.ssh` or a credential store.
 
@@ -85,3 +85,16 @@ Environment variables: `GITTREE_GIT` (path to the Git program), `GITTREE_DATA_DI
 ## Licence
 
 Apache-2.0.
+
+## Package the app (macOS)
+
+```sh
+cargo install cargo-bundle
+cd crates/gittree && cargo bundle --release --bin gittree
+```
+
+This makes `target/release/bundle/osx/Safi Git Tree.app`. It is not signed, so the first launch needs a right-click and "Open".
+
+## Licence
+
+Apache-2.0. See `LICENSE` and `NOTICE`. `cargo deny check licenses` checks the crates it links against the list in `deny.toml`.

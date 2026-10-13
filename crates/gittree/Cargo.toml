@@ -5,13 +5,48 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 default-run = "gittree"
+description = "A native Git client that shows the commit graph and runs the Git you already have."
+
+# For `cargo bundle --release --bin gittree`, which makes "Safi Git Tree.app".
+# The settings sit under the binary's name, because the package also has
+# the bench binary.
+[package.metadata.bundle.bin.gittree]
+name = "Safi Git Tree"
+identifier = "io.github.abdulkader-safi.sgt"
+icon = ["assets/app-icon/icon.icns"]
+category = "public.app-category.developer-tools"
+copyright = "Copyright 2026 Abdulkader Safi"
+
+[package.metadata.bundle.bin.gittree.macos]
+minimum_system_version = "13.0"
 
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
 gittree-core = { path = "../gittree-core" }
-gpui-kit = { version = "=0.7.3", features = ["tree-sitter-languages"] }
+# Only the grammars `views::diff::language_for` names. The kit's full set
+# adds about 20 MB to the app.
+gpui-kit = { version = "=0.7.3", features = [
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-css",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-markdown",
+    "tree-sitter-php",
+    "tree-sitter-python",
+    "tree-sitter-ruby",
+    "tree-sitter-rust",
+    "tree-sitter-sql",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
 # Only the bench uses libc, to read peak memory.
 libc = "0.2"
 notify = "8.2"

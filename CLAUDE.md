@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-M0 (the graph performance spike) is done and M1 (the app shell) is built: Git check, welcome screen, open and init, trust, the workspace frame, session restore, menu bar, settings and themes. `PROGRESS.md` lists what M1 still needs checked by hand. M2 (graph, sidebar, commit details, diff, search) is built on `RepoState` and also waits on hand checks. M3 (status, staging by file, hunk and line, discard, commit and amend, split diff, syntax colours, `run_op` and the journal) is built and waits on hand checks too. M1 to M3 are restyled to the Figma design (`PROGRESS.md` has the link). M11 step 1 (the MCP server, `gittree mcp`) is built ahead of order at the owner's request. M4 (branches, tags, stash, with their dialogs and menus) is built. M5 (merge, rebase, cherry-pick, revert, reset and the conflict view) is built. M6 (remotes, clone, fetch, pull, push, the credential prompt) is built and waits on a check against a real server. M7 (redo, the snapshot list, the command palette) is built. Next is M8, then the agent features in section 8 of the design.
+M0 (the graph performance spike) is done and M1 (the app shell) is built: Git check, welcome screen, open and init, trust, the workspace frame, session restore, menu bar, settings and themes. `PROGRESS.md` lists what M1 still needs checked by hand. M2 (graph, sidebar, commit details, diff, search) is built on `RepoState` and also waits on hand checks. M3 (status, staging by file, hunk and line, discard, commit and amend, split diff, syntax colours, `run_op` and the journal) is built and waits on hand checks too. M1 to M3 are restyled to the Figma design (`PROGRESS.md` has the link). M11 step 1 (the MCP server, `gittree mcp`) is built ahead of order at the owner's request. M4 (branches, tags, stash, with their dialogs and menus) is built. M5 (merge, rebase, cherry-pick, revert, reset and the conflict view) is built. M6 (remotes, clone, fetch, pull, push, the credential prompt) is built and waits on a check against a real server. M7 (redo, the snapshot list, the command palette) is built. The app builds and passes its tests on macOS, Windows and Linux in CI. M8 (contrast test, crash-safety test, licence check, the app bundle and icon) is built and waits on the bench rerun and a few checks by eye. Next are the agent features in section 8 of the design.
 
 The product is named Safi Git Tree (SGT). Internal identifiers (`gittree` crates and binary, `GITTREE_*` variables, `refs/gittree/`) keep the old working name.
 
@@ -25,6 +25,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p gittree -- /path/to/repo        # run the app on a repository
 scripts/make-big-repo.sh                     # build the 100,000-commit test repository in target/big-repo
 cargo run --release -p gittree --bin bench -- <path>   # performance numbers for NFR-01
+cargo deny check licenses                    # licences of the linked crates, against deny.toml
+(cd crates/gittree && cargo bundle --release --bin gittree)   # Safi Git Tree.app
 ```
 
 Tests that touch Git must run with `HOME` and `GIT_CONFIG_GLOBAL` pointed at a temporary folder, so they never read or write the developer's real config.

@@ -28,17 +28,7 @@ pub fn parse_file_diff(out: &[u8]) -> FileDiff {
                 continue;
             }
             if line.starts_with(b"\\") {
-                // "\ No newline at end of file" describes the line before it.
-                let last = diff.hunks.last().and_then(|hunk| hunk.lines.last());
-                match last.map(|line| line.kind) {
-                    Some(LineKind::Remove) => diff.no_newline_old = true,
-                    Some(LineKind::Add) => diff.no_newline_new = true,
-                    Some(LineKind::Context) => {
-                        diff.no_newline_old = true;
-                        diff.no_newline_new = true;
-                    }
-                    None => {}
-                }
+                no_newline(&mut diff);
                 continue;
             }
             if diff.hunks.is_empty() {
@@ -58,12 +48,7 @@ pub fn parse_file_diff(out: &[u8]) -> FileDiff {
             Some((b'-', text)) => (LineKind::Remove, text),
             Some((b'\\', _)) => {
                 // The marker can sit between the removed and added lines.
-                let last = diff.hunks.last().and_then(|hunk| hunk.lines.last());
-                match last.map(|line| line.kind) {
-                    Some(LineKind::Remove) => diff.no_newline_old = true,
-                    Some(LineKind::Add) => diff.no_newline_new = true,
-                    _ => {}
-                }
+                no_newline(&mut diff);
                 continue;
             }
             Some((_, text)) => (LineKind::Context, text),
@@ -92,6 +77,19 @@ pub fn parse_file_diff(out: &[u8]) -> FileDiff {
         diff.kind = DiffKind::ModeOnly;
     }
     diff
+}
+
+/// Handles "\\ No newline at end of file", which describes the line before
+/// it: that line loses the newline the patch format gave it.
+fn no_newline(diff: &mut FileDiff) {
+    let Some(last) = diff.hunks.last_mut().and_then(|hunk| hunk.lines.last_mut()) else {
+        return;
+    };
+    if last.text.last() == Some(&b'\n') {
+        last.text.pop();
+    }
+    diff.no_newline_old |= last.kind != LineKind::Add;
+    diff.no_newline_new |= last.kind != LineKind::Remove;
 }
 
 /// Reads `@@ -12,5 +14,6 @@ fn name()`. A missing length means 1.

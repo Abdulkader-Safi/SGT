@@ -55,6 +55,34 @@ impl TestRepo {
         self.git_with_input(time, args, b"")
     }
 
+    /// Writes a file in the working tree, making its folders.
+    pub fn write(&self, path: &str, content: &[u8]) {
+        let full = self.path().join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, content).unwrap();
+    }
+
+    pub fn read(&self, path: &str) -> Vec<u8> {
+        std::fs::read(self.path().join(path)).unwrap()
+    }
+
+    /// Commits everything in the working tree.
+    pub fn commit_all(&self, message: &str) {
+        self.git(1, &["add", "-A"]);
+        self.git(1, &["commit", "-q", "-m", message]);
+    }
+
+    /// Git's stdout as raw bytes, for content checks.
+    pub fn git_bytes(&self, args: &[&str]) -> Vec<u8> {
+        let output = Command::new("git")
+            .current_dir(self.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?} failed");
+        output.stdout
+    }
+
     pub fn git_with_input(&self, time: i64, args: &[&str], input: &[u8]) -> String {
         // The "@" marks a raw Unix timestamp, which Git needs for small values.
         let date = format!("@{time} +0000");

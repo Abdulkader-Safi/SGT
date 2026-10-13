@@ -3,11 +3,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::GitError;
 use crate::model::{
-    Change, Commit, CommitDetails, DiffKind, FileChange, FileDiff, Head, Oid, Ref, RepoPath,
+    Change, Commit, CommitDetails, DiffKind, DiffLine, FileChange, FileDiff, Head, Hunk, LineKind,
+    Oid, Ref, RepoPath, StatusEntry,
 };
 use crate::parse::diff::parse_file_diff;
 use crate::parse::log::{LOG_FORMAT, LogParser};
 use crate::parse::refs::{REF_FORMAT, parse_refs};
+use crate::parse::status::parse_status;
 use crate::runner::{Access, GitRunner};
 
 pub const LOG_BATCH: usize = 2_000;
@@ -193,23 +195,30 @@ pub fn diff_commit_file(
     diff.new_path = (file.change != Change::Deleted).then(|| file.path.clone());
 
     if matches!(diff.kind, DiffKind::Binary { .. }) {
-        let size = |rev: String, path: &Option<RepoPath>| -> u64 {
-            let Some(path) = path else { return 0 };
-            let mut spec = rev.into_bytes();
-            spec.push(b':');
-            spec.extend_from_slice(&path.0);
-            let spec: &std::ffi::OsStr = std::os::unix::ffi::OsStrExt::from_bytes(&spec);
-            runner
-                .read(["cat-file".as_ref(), "-s".as_ref(), spec])
-                .ok()
-                .and_then(|out| String::from_utf8_lossy(&out).trim().parse().ok())
-                .unwrap_or(0)
-        };
         diff.kind = DiffKind::Binary {
-            old_size: size(format!("{oid}^"), &diff.old_path),
-            new_size: size(oid.to_string(), &diff.new_path),
+            old_size: blob_size(runner, &format!("{oid}^"), &diff.old_path),
+            new_size: blob_size(runner, oid, &diff.new_path),
         };
     }
+    Ok(cut_large(diff, load_all))
+}
+
+/// The size of `rev:path`, or 0 when there is no such file. An empty `rev`
+/// reads the index.
+fn blob_size(runner: &GitRunner, rev: &str, path: &Option<RepoPath>) -> u64 {
+    let Some(path) = path else { return 0 };
+    let mut spec = format!("{rev}:").into_bytes();
+    spec.extend_from_slice(&path.0);
+    let spec: &std::ffi::OsStr = std::os::unix::ffi::OsStrExt::from_bytes(&spec);
+    runner
+        .read(["cat-file".as_ref(), "-s".as_ref(), spec])
+        .ok()
+        .and_then(|out| String::from_utf8_lossy(&out).trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Cuts a very large diff to its first `LARGE_DIFF_SHOWN` lines.
+fn cut_large(mut diff: FileDiff, load_all: bool) -> FileDiff {
     let lines: usize = diff.hunks.iter().map(|hunk| hunk.lines.len()).sum();
     if lines > LARGE_DIFF_LINES && !load_all {
         let mut room = LARGE_DIFF_SHOWN;
@@ -220,5 +229,156 @@ pub fn diff_commit_file(
         });
         diff.kind = DiffKind::TooLarge { lines };
     }
-    Ok(diff)
+    diff
+}
+
+/// Every changed, staged or untracked file.
+pub fn status(runner: &GitRunner) -> Result<Vec<StatusEntry>, GitError> {
+    let out = runner.read(["status", "--porcelain=v2", "-z", "--untracked-files=all"])?;
+    Ok(parse_status(&out))
+}
+
+/// The diff of one changed file: HEAD against the index when `staged`, else
+/// the index against the working tree. An untracked file is read from disk
+/// and shown as all added.
+pub fn diff_worktree(
+    runner: &GitRunner,
+    entry: &StatusEntry,
+    staged: bool,
+    load_all: bool,
+) -> Result<FileDiff, GitError> {
+    if !staged && entry.worktree == Change::Untracked {
+        return Ok(cut_large(untracked_diff(runner, &entry.path), load_all));
+    }
+    let mut args: Vec<&std::ffi::OsStr> =
+        ["diff", "-M", "--no-color", "--no-ext-diff", "--no-textconv"]
+            .iter()
+            .map(|arg| arg.as_ref())
+            .collect();
+    if staged {
+        args.push("--cached".as_ref());
+    }
+    args.push("--".as_ref());
+    // A rename only shows in the index. Both names, or Git cannot see it.
+    let orig_path = entry.orig_path.as_ref().filter(|_| staged);
+    args.extend(orig_path.map(RepoPath::as_os_str));
+    args.push(entry.path.as_os_str());
+
+    let mut diff = parse_file_diff(&runner.read(args)?);
+    let change = if staged { entry.index } else { entry.worktree };
+    diff.old_path = (change != Change::Added).then(|| orig_path.unwrap_or(&entry.path).clone());
+    diff.new_path = (change != Change::Deleted).then(|| entry.path.clone());
+
+    if matches!(diff.kind, DiffKind::Binary { .. }) {
+        let on_disk = || {
+            std::fs::symlink_metadata(runner.dir().join(entry.path.as_os_str()))
+                .map_or(0, |meta| meta.len())
+        };
+        diff.kind = if staged {
+            DiffKind::Binary {
+                old_size: blob_size(runner, "HEAD", &diff.old_path),
+                new_size: blob_size(runner, "", &diff.new_path),
+            }
+        } else {
+            DiffKind::Binary {
+                old_size: blob_size(runner, "", &diff.old_path),
+                new_size: on_disk(),
+            }
+        };
+    }
+    Ok(cut_large(diff, load_all))
+}
+
+/// Builds the diff Git would print for a new file, from the file on disk.
+/// A file that cannot be read gives an empty diff.
+fn untracked_diff(runner: &GitRunner, path: &RepoPath) -> FileDiff {
+    use std::os::unix::fs::PermissionsExt;
+
+    let full = runner.dir().join(path.as_os_str());
+    let meta = std::fs::symlink_metadata(&full).ok();
+    let is_link = meta.as_ref().is_some_and(|meta| meta.is_symlink());
+    let content = if is_link {
+        std::fs::read_link(&full)
+            .map(|target| std::os::unix::ffi::OsStringExt::into_vec(target.into_os_string()))
+            .unwrap_or_default()
+    } else {
+        std::fs::read(&full).unwrap_or_default()
+    };
+    let mode = match &meta {
+        _ if is_link => "120000",
+        Some(meta) if meta.permissions().mode() & 0o111 != 0 => "100755",
+        _ => "100644",
+    };
+    let name = quote_path(b"a/", &path.0);
+    let mut header = b"diff --git ".to_vec();
+    header.extend_from_slice(&name);
+    header.push(b' ');
+    header.extend_from_slice(&quote_path(b"b/", &path.0));
+    header.extend_from_slice(format!("\nnew file mode {mode}\n--- /dev/null\n+++ ").as_bytes());
+    header.extend_from_slice(&quote_path(b"b/", &path.0));
+    header.push(b'\n');
+
+    let mut diff = FileDiff {
+        old_path: None,
+        new_path: Some(path.clone()),
+        kind: DiffKind::Text,
+        header,
+        hunks: Vec::new(),
+        no_newline_old: false,
+        no_newline_new: false,
+    };
+    // Git calls a file binary when a NUL shows in its first 8,000 bytes.
+    if content.iter().take(8000).any(|&b| b == 0) {
+        diff.kind = DiffKind::Binary {
+            old_size: 0,
+            new_size: content.len() as u64,
+        };
+        return diff;
+    }
+    let lines: Vec<DiffLine> = content
+        .split_inclusive(|&b| b == b'\n')
+        .zip(1..)
+        .map(|(text, number)| DiffLine {
+            kind: LineKind::Add,
+            old_no: None,
+            new_no: Some(number),
+            text: text.to_vec(),
+        })
+        .collect();
+    if !lines.is_empty() {
+        diff.no_newline_new = !content.ends_with(b"\n");
+        diff.hunks.push(Hunk {
+            old_start: 0,
+            old_len: 0,
+            new_start: 1,
+            new_len: lines.len() as u32,
+            section: String::new(),
+            lines,
+        });
+    }
+    diff
+}
+
+/// A path as Git writes it in a patch header: in double quotes with C-style
+/// escapes when it holds anything but plain printable ASCII.
+pub fn quote_path(prefix: &[u8], path: &[u8]) -> Vec<u8> {
+    let plain = |b: u8| (0x20..0x7f).contains(&b) && b != b'"' && b != b'\\';
+    let mut out = Vec::with_capacity(prefix.len() + path.len() + 2);
+    if path.iter().all(|&b| plain(b)) {
+        out.extend_from_slice(prefix);
+        out.extend_from_slice(path);
+        return out;
+    }
+    out.push(b'"');
+    out.extend_from_slice(prefix);
+    for &b in path {
+        match b {
+            b'"' => out.extend_from_slice(b"\\\""),
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            _ if plain(b) => out.push(b),
+            _ => out.extend_from_slice(format!("\\{b:03o}").as_bytes()),
+        }
+    }
+    out.push(b'"');
+    out
 }

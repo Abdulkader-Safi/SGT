@@ -2,9 +2,11 @@
 
 pub mod error;
 pub mod graph;
+pub mod journal;
 pub mod model;
 pub mod ops;
 pub mod parse;
+pub mod patch;
 pub mod runner;
 pub mod store;
 

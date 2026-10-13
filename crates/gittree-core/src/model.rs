@@ -81,7 +81,11 @@ pub struct ActivityRecord {
 
 /// A path inside a repository, as the raw bytes Git stores. Git paths need
 /// not be UTF-8.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+// ponytail: serialised as a list of byte values, which keeps paths that
+// are not UTF-8 exact. Only the journal stores paths.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct RepoPath(pub Vec<u8>);
 
 impl RepoPath {
@@ -158,6 +162,41 @@ pub enum Change {
     Copied,
     TypeChange,
     Untracked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKind {
+    BothModified,
+    BothAdded,
+    DeletedByUs,
+    DeletedByThem,
+    AddedByUs,
+    AddedByThem,
+    BothDeleted,
+}
+
+/// One changed file in the working tree or the index. A file with both an
+/// index and a worktree change shows in the staged and the unstaged list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusEntry {
+    pub path: RepoPath,
+    /// Where a renamed or copied file came from.
+    pub orig_path: Option<RepoPath>,
+    /// HEAD against the index.
+    pub index: Change,
+    /// The index against the working tree. `Untracked` shows only here.
+    pub worktree: Change,
+    pub conflict: Option<ConflictKind>,
+}
+
+impl StatusEntry {
+    pub fn staged(&self) -> bool {
+        self.conflict.is_none() && self.index != Change::Unmodified
+    }
+
+    pub fn unstaged(&self) -> bool {
+        self.conflict.is_some() || self.worktree != Change::Unmodified
+    }
 }
 
 /// One file changed by a commit.

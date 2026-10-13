@@ -50,6 +50,21 @@ fn parse_version(text: &str) -> Option<(u32, u32)> {
     Some((numbers.next()?.parse().ok()?, numbers.next()?.parse().ok()?))
 }
 
+/// The one spelling of a path the app uses, so paths can be compared: links
+/// resolved, and on Windows without the `\\?\` prefix that `canonicalize`
+/// adds there, which Git and other programs do not all accept. A path that
+/// does not exist comes back as it is.
+pub fn canonical(path: &Path) -> PathBuf {
+    let full = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    #[cfg(windows)]
+    if let Some(plain) = full.to_str().and_then(|text| text.strip_prefix(r"\\?\"))
+        && !plain.starts_with("UNC")
+    {
+        return plain.into();
+    }
+    full
+}
+
 /// Opens the repository that contains `path`. It is trusted only if its
 /// working tree root is on the trust list.
 pub fn open(git: &Path, path: &Path, trust: &TrustList) -> Result<Repository, GitError> {
@@ -64,9 +79,12 @@ pub fn open(git: &Path, path: &Path, trust: &TrustList) -> Result<Repository, Gi
         "--show-object-format",
     ])?;
     let mut lines = out.split(|&b| b == b'\n');
-    let mut next_path = || PathBuf::from(&*crate::model::os_str(lines.next().unwrap_or_default()));
+    let mut next_path = || {
+        canonical(&PathBuf::from(&*crate::model::os_str(
+            lines.next().unwrap_or_default(),
+        )))
+    };
     let path = next_path();
-    let path = path.canonicalize().unwrap_or(path);
     let git_dir = next_path();
     let common_dir = next_path();
     let object_format = match lines.next() {
@@ -91,7 +109,7 @@ pub fn open(git: &Path, path: &Path, trust: &TrustList) -> Result<Repository, Gi
 pub fn init(git: &Path, path: &Path, trust: &mut TrustList) -> Result<Repository, GitError> {
     if !path.join(".git").exists() {
         GitRunner::new(git, path, true).write(["init"])?;
-        trust.insert(&path.canonicalize().unwrap_or_else(|_| path.to_owned()));
+        trust.insert(&canonical(path));
     }
     open(git, path, trust)
 }

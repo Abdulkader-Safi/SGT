@@ -60,7 +60,7 @@ fn opens_a_repository_from_a_subfolder() {
     std::fs::create_dir_all(&sub).unwrap();
 
     let opened = open(GIT.as_ref(), &sub, &TrustList::default()).unwrap();
-    let root = repo.path().canonicalize().unwrap();
+    let root = gittree_core::ops::setup::canonical(repo.path());
     assert_eq!(opened.path, root);
     assert_eq!(opened.git_dir, root.join(".git"));
     assert_eq!(opened.common_dir, root.join(".git"));
@@ -73,7 +73,7 @@ fn opens_a_repository_from_a_subfolder() {
 fn a_repository_on_the_trust_list_opens_trusted() {
     let repo = TestRepo::new();
     let mut trust = TrustList::default();
-    trust.insert(&repo.path().canonicalize().unwrap());
+    trust.insert(&gittree_core::ops::setup::canonical(repo.path()));
     assert!(open(GIT.as_ref(), repo.path(), &trust).unwrap().trusted);
 }
 
@@ -127,7 +127,10 @@ fn init_creates_a_trusted_empty_repository() {
     assert!(dir.path().join(".git").is_dir());
     assert!(repo.trusted);
     assert!(matches!(repo.head, Head::Unborn(_)));
-    assert_eq!(trust.paths, [dir.path().canonicalize().unwrap()]);
+    assert_eq!(
+        trust.paths,
+        [gittree_core::ops::setup::canonical(dir.path())]
+    );
 }
 
 #[test]

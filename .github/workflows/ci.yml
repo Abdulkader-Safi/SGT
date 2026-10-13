@@ -31,5 +31,9 @@ jobs:
       - run: cargo fmt --check
       # The core crate first: it builds in seconds and holds the Git logic.
       - run: cargo test -p gittree-core --no-fail-fast
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --no-fail-fast
+      # These still run when a step above failed, so one push shows
+      # everything that is wrong.
+      - if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - if: ${{ !cancelled() }}
+        run: cargo test --workspace --no-fail-fast

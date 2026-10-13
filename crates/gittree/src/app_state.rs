@@ -325,7 +325,7 @@ impl AppState {
                     Ok(()) => {
                         this.clone = None;
                         // The app made this repository, so it is trusted.
-                        let path = dest.canonicalize().unwrap_or(dest);
+                        let path = gittree_core::ops::setup::canonical(&dest);
                         this.trust.insert(&path);
                         this.save(&this.trust);
                         this.open(path, cx);

@@ -100,7 +100,7 @@ fn opens_a_repository_untrusted_then_remembers_trust(cx: &mut TestAppContext) {
         repo.path(),
         &["commit", "-q", "--allow-empty", "-m", "first"],
     );
-    let root = repo.path().canonicalize().unwrap();
+    let root = gittree_core::ops::setup::canonical(repo.path());
 
     let shell = launch(data.path(), Some(repo.path().to_owned()), cx);
     cx.update(|cx| {
@@ -761,7 +761,10 @@ fn pushes_fetches_pulls_and_clones_through_the_app(cx: &mut TestAppContext) {
     }
     cx.update(|cx| {
         let open = shell.app.read(cx).repo.as_ref().unwrap().read(cx);
-        assert_eq!(open.repository.path, target.canonicalize().unwrap());
+        assert_eq!(
+            open.repository.path,
+            gittree_core::ops::setup::canonical(&target)
+        );
         assert!(open.repository.trusted);
     });
     assert!(target.join("b.txt").exists());

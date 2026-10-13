@@ -434,3 +434,7 @@ The owner asked for the app to run on Windows and Linux, checked in CI. They wer
 - The Git install hint on Linux is the `apt` command only.
 - The bench does not report peak memory on Windows.
 - Nobody has run the app in a window on either system. CI only builds it and runs the tests.
+
+### CI result
+
+All three systems pass fmt, clippy and every test as of commit `Port step 4`. Getting there found one real bug on macOS: the askpass helper dropped an answer when the app replied before the helper had closed its side of the socket.

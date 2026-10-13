@@ -15,6 +15,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M2: graph and read-only browsing | Built, 57 tests pass. Waiting on the manual checks listed below |
 | M3: staging and commit | Built, 81 tests pass. Waiting on the manual checks listed below |
 | M4 to M10 | Not started |
+| M11: MCP server | Step 1 built: the server and five tools. See below |
 
 ## M0: de-risk
 
@@ -271,3 +272,31 @@ The design also covers screens whose features are not built: Clone (M6), context
 - The Settings window still uses the kit's own form layout.
 - Toasts and dialogs are the kit's, recoloured through the theme.
 - Diff lines are 22 px high, not 20, so the default diff font is not clipped.
+
+## Scope change: agents, AI and hosting (2026-10-13)
+
+Safi asked for the features GitKraken has beyond a plain Git client, starting with MCP. They are in `03-requirements.md` as FR-AGENT-01 to 06 and in the build spec as M11 to M13. A built-in terminal was designed and then dropped: Safi does not want one in the app. The rule that shaped the list: nothing may need an account, a server or a stored secret. So AI runs through a command-line agent already on the Mac, and pull requests go through the `gh` command. Cloud patches, synced workspaces, team insights and single sign-on were left out because each needs a hosted service.
+
+The design is section 8 of the Figma Design page. The Figma file also has a prototype now: five flows, with dialogs as overlays.
+
+## M11: MCP server
+
+### Step 1 (built)
+
+`gittree mcp [folder]` serves MCP over stdio for one repository, with no window. It uses the same `GitRunner`, trust list and journal as the app.
+
+- Tools: `git_status`, `git_log_or_diff`, `git_blame`, `git_branch` (list) and `git_add_or_commit`.
+- A changing tool needs a trusted repository and "Read and change" under Settings, Coding agents. The default is "Read only".
+- A commit made by an agent gets a journal entry, so the app's Undo takes it back.
+- A revision that starts with a dash is refused, and a path always goes behind `--`.
+- Output over 200,000 bytes is cut, with a note.
+
+To connect Claude Code: `claude mcp add sgt -- /path/to/gittree mcp`, run in the repository folder.
+
+Checked by tests: the protocol (initialize, notifications, unknown methods, one line in and one line out), every read tool in an untrusted repository, the two refusals for changes, an agent commit and its undo, and option injection through `revision` and `path`. Also tried by hand over a pipe against the built binary.
+
+### Still to do
+
+- `git_checkout`, `git_stash`, `git_worktree` and branch create and delete, once M4 has those operations.
+- The MCP page in Settings from the design (per-tool switches, the copy-ready client command).
+- The agent activity panel and the approval banner. Both need the server and a running app to talk to each other, which they do not yet: today the server is its own process.

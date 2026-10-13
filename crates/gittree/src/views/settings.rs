@@ -1,4 +1,4 @@
-use gittree_core::store::{DiffView, PullMode, Settings as Stored, ThemeChoice};
+use gittree_core::store::{DiffView, McpAccess, PullMode, Settings as Stored, ThemeChoice};
 use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
@@ -179,12 +179,28 @@ impl Render for SettingsView {
                 ),
             ));
 
+        let agents = SettingGroup::new().title(label("settings.agents")).item(
+            SettingItem::new(
+                label("settings.mcp_access"),
+                choice(
+                    &[
+                        (McpAccess::ReadOnly, "settings.mcp_read_only"),
+                        (McpAccess::ReadWrite, "settings.mcp_read_write"),
+                    ],
+                    |s| s.mcp_access,
+                    |s, v| s.mcp_access = v,
+                ),
+            )
+            .description(label("settings.mcp_help")),
+        );
+
         div().size_full().child(
             Settings::new("settings").page(
                 SettingPage::new(label("settings.title"))
                     .default_open(true)
                     .group(appearance)
-                    .group(git),
+                    .group(git)
+                    .group(agents),
             ),
         )
     }

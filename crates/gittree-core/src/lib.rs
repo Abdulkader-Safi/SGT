@@ -3,6 +3,7 @@
 pub mod error;
 pub mod graph;
 pub mod journal;
+pub mod mcp;
 pub mod model;
 pub mod ops;
 pub mod parse;

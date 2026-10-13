@@ -17,6 +17,7 @@ Early development. What works today:
 - Commit and amend, with the message kept as a draft until it is used.
 - Inline and split diffs with syntax colours for 19 languages.
 - Undo for the last commit or discard.
+- An MCP server (`gittree mcp`), so a coding agent can read status, history, diffs and blame, and stage and commit when you allow it.
 - The view updates by itself when the repository changes on disk.
 - Settings, light and dark themes, and the window layout restored at launch.
 

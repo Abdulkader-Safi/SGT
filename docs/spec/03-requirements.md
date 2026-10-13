@@ -184,6 +184,18 @@ Priorities: Must is required for v1. Should is built after the Musts, in the pos
 - **FR-STATE-05 [Should]** The app should keep an activity log listing each Git command it ran, with time, duration, exit code and output, viewable in the app.
 - **FR-STATE-06 [Should]** The app should show a toast when a background operation finishes or fails.
 
+### Agents, AI and hosting (AGENT)
+
+Added on 2026-10-13, after v1 scope was set, at the owner's request. These come after the MVP. None of them adds an account, a server or a stored secret: AI runs through a command-line agent already installed on the Mac, and hosting goes through the `gh` command.
+
+- **FR-AGENT-01 [Should]** The app should offer an MCP server over stdio (`gittree mcp`), so a coding agent can read the repository and, when allowed, change it through the app's own Git path.
+  *Acceptance:* an MCP client lists the tools and reads status, log, diff and blame. In an untrusted repository, or with access set to read only, every changing tool is refused. A commit made by an agent has a journal entry and can be undone in the app.
+- **FR-AGENT-02 [Should]** The app should list every call an agent made, and ask before each change when that setting is on.
+- **FR-AGENT-03 [Should]** The app should show blame for a file and the history of one file (this replaces FR-DIFF-05 and FR-DIFF-06 as the place they are built).
+- **FR-AGENT-04 [Should]** The app should list, add and remove worktrees, and start an agent session in a new worktree on a new branch.
+- **FR-AGENT-05 [Could]** The app could write a commit message, explain a commit, suggest a conflict result and plan commits from uncommitted work, by running a command-line agent the user has installed. Nothing is sent anywhere by the app itself.
+- **FR-AGENT-06 [Could]** The app could list pull requests and issues and create a pull request, through the `gh` command the user has signed in to.
+
 ## Standard states
 
 - Undo and redo: FR-UNDO-01, FR-UNDO-02.

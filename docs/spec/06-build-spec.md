@@ -382,6 +382,19 @@ A throwaway spike of the top risk: can this stack load and draw a 100,000-commit
 - **Covers:** FR-REPO-05, FR-GRAPH-06, FR-STAGE-07, FR-STAGE-08, FR-STAGE-09, FR-BRANCH-05, FR-STASH-02, FR-SYNC-05, FR-CMD-03, FR-SET-03, FR-SET-04, FR-SET-05, FR-STATE-05, FR-STATE-06
 - **Tasks:** repository tabs, hide/show branches and `change:` search, message history and co-authors, signing errors, add to `.gitignore`, set upstream, stash to branch, auto-fetch, `keymap.json`, high-contrast and user themes, zoom, identity display, activity log view, completion toasts.
 
+### M11: MCP server (post-MVP)
+
+- **Covers:** FR-AGENT-01, FR-AGENT-02
+- **Tasks:** `gittree mcp` speaking MCP over stdio, with `git_status`, `git_log_or_diff`, `git_blame`, `git_branch` and `git_add_or_commit`. Trust and the access setting decide what an agent may change, and agent commits are journaled. Then `git_checkout`, `git_stash` and `git_worktree` once M4 exists, the MCP page in Settings, the agent activity panel and the approval banner.
+
+### M12: blame, file history, worktrees and agent sessions (post-MVP)
+
+- **Covers:** FR-AGENT-03, FR-AGENT-04
+
+### M13: AI helpers and Launchpad (post-MVP)
+
+- **Covers:** FR-AGENT-05, FR-AGENT-06
+
 ## 9. Acceptance criteria
 
 ### POC (proves the core idea: M1 to M3)
@@ -480,13 +493,13 @@ A throwaway spike of the top risk: can this stack load and draw a 100,000-commit
 
 Do not build these, even if they look easy:
 
-- Hosting integrations: GitHub, GitLab, Bitbucket, Azure DevOps, pull requests, issues, CI status.
-- Any AI feature: chat, agent mode, generated commit messages.
-- A built-in terminal.
+- Hosting integrations built into the app, and any stored token. After the MVP, pull requests and issues come through the user's own `gh` command (FR-AGENT-06).
+- Any AI feature in the MVP. After it, AI helpers run through a command-line agent the user has installed (FR-AGENT-05), and agents reach the app through its MCP server (FR-AGENT-01).
+- A built-in terminal. The owner confirmed on 2026-10-13 that the app should not have one.
 - User accounts, sign-in, any server.
 - Arabic or any right-to-left layout. Any language besides English.
 - Windows and Linux builds or packaging.
-- Worktrees, submodules, Git LFS management, bisect, Git Flow, patch create and apply.
+- Submodules, Git LFS management, bisect, Git Flow, patch create and apply. Worktrees come after the MVP, in M12.
 - Partial clone options (shallow, sparse, blobless).
 - Identity profiles, SSH key management, external diff or merge tools, custom commands.
 - Auto-update, system notifications, onboarding tutorial.

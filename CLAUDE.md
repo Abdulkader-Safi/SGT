@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-M0 (the graph performance spike) is done and M1 (the app shell) is built: Git check, welcome screen, open and init, trust, the workspace frame, session restore, menu bar, settings and themes. `PROGRESS.md` lists what M1 still needs checked by hand. M2 (graph, sidebar, commit details, diff, search) is built on `RepoState` and also waits on hand checks. M3 (status, staging by file, hunk and line, discard, commit and amend, split diff, syntax colours, `run_op` and the journal) is built and waits on hand checks too. Next is M4.
+M0 (the graph performance spike) is done and M1 (the app shell) is built: Git check, welcome screen, open and init, trust, the workspace frame, session restore, menu bar, settings and themes. `PROGRESS.md` lists what M1 still needs checked by hand. M2 (graph, sidebar, commit details, diff, search) is built on `RepoState` and also waits on hand checks. M3 (status, staging by file, hunk and line, discard, commit and amend, split diff, syntax colours, `run_op` and the journal) is built and waits on hand checks too. M1 to M3 are restyled to the Figma design (`PROGRESS.md` has the link). M11 step 1 (the MCP server, `gittree mcp`) is built ahead of order at the owner's request. Next is M4.
 
 The product is named Safi Git Tree (SGT). Internal identifiers (`gittree` crates and binary, `GITTREE_*` variables, `refs/gittree/`) keep the old working name.
 

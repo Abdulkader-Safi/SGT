@@ -129,6 +129,19 @@ pub struct Settings {
     pub clone_dir: PathBuf,
     /// 0 is off.
     pub auto_fetch_minutes: u32,
+    /// What a coding agent may do through the MCP server.
+    pub mcp_access: McpAccess,
+}
+
+/// What the MCP server lets an agent do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAccess {
+    /// Status, history, diffs and blame only.
+    #[default]
+    ReadOnly,
+    /// Also staging and commits, in trusted repositories.
+    ReadWrite,
 }
 
 impl Default for Settings {
@@ -146,6 +159,7 @@ impl Default for Settings {
             git_path: None,
             clone_dir: if developer.is_dir() { developer } else { home },
             auto_fetch_minutes: 0,
+            mcp_access: McpAccess::ReadOnly,
         }
     }
 }

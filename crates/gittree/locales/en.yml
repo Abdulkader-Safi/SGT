@@ -97,6 +97,11 @@ settings:
   git_path: "Git program"
   git_path_help: "Leave empty to use the Git on your PATH."
   clone_dir: "Clone folder"
+  agents: "Coding agents"
+  mcp_access: "MCP server access"
+  mcp_read_only: "Read only"
+  mcp_read_write: "Read and change"
+  mcp_help: "What an agent may do through \"gittree mcp\". Changes work only in trusted repositories, and a commit an agent makes can be undone here."
 
 menu:
   settings: "Settings…"

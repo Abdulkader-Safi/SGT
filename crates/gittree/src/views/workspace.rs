@@ -43,6 +43,10 @@ pub struct Workspace {
     conflict: Entity<ConflictView>,
     search: Entity<InputState>,
     focus: FocusHandle,
+    // ponytail: hidden panels come back at the next launch. Save these in
+    // the session if that annoys anyone.
+    show_sidebar: bool,
+    show_detail: bool,
 }
 
 impl Workspace {
@@ -52,24 +56,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let panels = cx.new(|_| ResizableState::default());
-        cx.subscribe(&panels, |this, panels, _: &ResizablePanelEvent, cx| {
-            let sizes: Vec<f32> = panels
-                .read(cx)
-                .sizes()
-                .iter()
-                .map(|s| f32::from(*s))
-                .collect();
-            if let [sidebar, _, detail] = sizes[..] {
-                this.app.update(cx, |app, _| {
-                    app.update_session(|session| {
-                        session.sidebar_width = sidebar;
-                        session.detail_size = detail;
-                    })
-                });
-            }
-        })
-        .detach();
+        let panels = Self::new_panels(cx);
 
         let search = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t!("search.placeholder").into_owned())
@@ -132,9 +119,50 @@ impl Workspace {
             panels,
             search,
             focus: cx.focus_handle(),
+            show_sidebar: true,
+            show_detail: true,
             app,
             repo,
         }
+    }
+
+    /// The panel sizes, saved to the session whenever a divider moves.
+    fn new_panels(cx: &mut Context<Self>) -> Entity<ResizableState> {
+        let panels = cx.new(|_| ResizableState::default());
+        cx.subscribe(&panels, |this, panels, _: &ResizablePanelEvent, cx| {
+            let sizes: Vec<f32> = panels
+                .read(cx)
+                .sizes()
+                .iter()
+                .map(|s| f32::from(*s))
+                .collect();
+            let (show_sidebar, show_detail) = (this.show_sidebar, this.show_detail);
+            if let [sidebar, _, detail] = sizes[..] {
+                this.app.update(cx, |app, _| {
+                    app.update_session(|session| {
+                        // A hidden panel keeps the size it had.
+                        if show_sidebar {
+                            session.sidebar_width = sidebar;
+                        }
+                        if show_detail {
+                            session.detail_size = detail;
+                        }
+                    })
+                });
+            }
+        })
+        .detach();
+        panels
+    }
+
+    /// Shows or hides the branch list (`left`) or the details panel.
+    fn toggle_panel(&mut self, left: bool, cx: &mut Context<Self>) {
+        if left {
+            self.show_sidebar = !self.show_sidebar;
+        } else {
+            self.show_detail = !self.show_detail;
+        }
+        cx.notify();
     }
 }
 
@@ -272,6 +300,15 @@ impl Render for Workspace {
             .bg(p.bg_panel)
             .border_b_1()
             .border_color(p.border)
+            .child({
+                let tip = t!("toolbar.toggle_sidebar").into_owned();
+                tool("toggle-sidebar", "sidebar-left", None, None)
+                    .when(!self.show_sidebar, |button| button.opacity(0.5))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(p.bg_hover))
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_panel(true, cx)))
+            })
             .child(
                 h_flex()
                     .flex_none()
@@ -426,11 +463,20 @@ impl Render for Workspace {
             .child(
                 Input::new(&self.search)
                     .id("search")
-                    .small()
                     .cleanable(true)
-                    .prefix(ic("search", 14., p.text_tertiary))
-                    .w(px(280.)),
-            );
+                    .prefix(ic("search", 16., p.text_tertiary))
+                    .h(px(32.))
+                    .w(px(320.)),
+            )
+            .child({
+                let tip = t!("toolbar.toggle_detail").into_owned();
+                tool("toggle-detail", "sidebar-right", None, None)
+                    .when(!self.show_detail, |button| button.opacity(0.5))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(p.bg_hover))
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_panel(false, cx)))
+            });
 
         let untrusted = (!trusted).then(|| {
             banner(
@@ -592,6 +638,7 @@ impl Render for Workspace {
                         .with_state(&self.panels)
                         .child(
                             resizable_panel()
+                                .visible(self.show_sidebar)
                                 .size(px(sidebar_width))
                                 .size_range(px(160.)..px(480.))
                                 .child(self.sidebar.clone()),
@@ -599,6 +646,7 @@ impl Render for Workspace {
                         .child(resizable_panel().child(self.graph.clone()))
                         .child(
                             resizable_panel()
+                                .visible(self.show_detail)
                                 .size(px(detail_size))
                                 .size_range(px(240.)..px(900.))
                                 .child(right),

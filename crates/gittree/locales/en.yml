@@ -63,6 +63,8 @@ toolbar:
   branch: "Branch"
   stash: "Stash"
   working: "Working…"
+  toggle_sidebar: "Show or hide the branch list"
+  toggle_detail: "Show or hide the details panel"
 
 not_a_repository:
   title: "Not a repository"

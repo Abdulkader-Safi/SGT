@@ -1,5 +1,6 @@
 //! The app's icons, embedded in the binary. Most are Reicon outline icons.
-//! The Git ones (branch, commit, merge) and a few others are drawn for the app.
+//! The Git ones (branch, commit, merge), the sidebar ones and a few others
+//! are drawn for the app.
 
 use gpui_kit::component::Icon;
 
@@ -32,6 +33,8 @@ pub fn icon(name: &str) -> Icon {
         "remote" => include_bytes!("../assets/icons/remote.svg"),
         "search" => include_bytes!("../assets/icons/search.svg"),
         "settings" => include_bytes!("../assets/icons/settings.svg"),
+        "sidebar-left" => include_bytes!("../assets/icons/sidebar-left.svg"),
+        "sidebar-right" => include_bytes!("../assets/icons/sidebar-right.svg"),
         "shield" => include_bytes!("../assets/icons/shield.svg"),
         "split" => include_bytes!("../assets/icons/split.svg"),
         "stash" => include_bytes!("../assets/icons/stash.svg"),

@@ -1299,6 +1299,44 @@ fn an_agents_change_waits_for_allow_and_is_listed(cx: &mut TestAppContext) {
     shell.in_window(cx, |_, _| ());
 }
 
+/// FR-MERGE-06: the merge dialog draws with its conflict prediction and
+/// merges nothing on its own. `predict_conflicts` has its own test.
+#[gpui_kit::test]
+fn the_merge_dialog_predicts_conflicts(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("f.txt"), "one\ntwo\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    git(dir.path(), &["switch", "-q", "-c", "side"]);
+    std::fs::write(dir.path().join("f.txt"), "one\nSIDE\n").unwrap();
+    git(dir.path(), &["commit", "-q", "-am", "side"]);
+    git(dir.path(), &["switch", "-q", "main"]);
+    std::fs::write(dir.path().join("f.txt"), "one\nMAIN\n").unwrap();
+    git(dir.path(), &["commit", "-q", "-am", "main"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    shell.in_window(cx, |window, cx| {
+        gittree::views::dialogs::merge(repo, "side".into(), "main".into(), window, cx)
+    });
+    // The prediction runs on the background executor, then the dialog
+    // draws with it.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    shell.in_window(cx, |_, _| ());
+    assert!(shell.in_window(cx, |window, _| window.try_find("cancel").is_some()));
+    // Nothing was merged.
+    let head = Command::new("git")
+        .current_dir(dir.path())
+        .args(["log", "-1", "--format=%s"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(head.stdout).unwrap(), "main\n");
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

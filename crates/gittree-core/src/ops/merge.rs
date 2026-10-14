@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::error::{GitError, GitErrorKind};
 use crate::model::RepoPath;
 use crate::ops::read;
-use crate::runner::GitRunner;
+use crate::runner::{Access, GitRunner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +86,47 @@ pub fn merge(
     args.extend(no_ff.then_some("--no-ff"));
     args.push(branch);
     or_conflict(runner, git_dir, runner.write(args))
+}
+
+/// The files that would conflict if `theirs` were merged into HEAD, worked
+/// out without touching the working tree or the index (FR-MERGE-06).
+/// Git writes the trial result's objects, so it needs a trusted repository.
+// ponytail: a rebase is predicted as the same three-way merge. Replayed
+// commit by commit it can conflict where the whole does not, or the other
+// way round. Predicting each step needs a merge-tree per commit.
+pub fn predict_conflicts(runner: &GitRunner, theirs: &str) -> Result<Vec<RepoPath>, GitError> {
+    use std::io::Read;
+
+    check_rev(theirs)?;
+    let mut out = Vec::new();
+    let args = [
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        "--no-messages",
+        "-z",
+        "HEAD",
+        theirs,
+    ];
+    let result = runner.run(Access::Write, args, None, None, |stdout| {
+        stdout.read_to_end(&mut out)
+    });
+    match result {
+        Ok(_) => Ok(Vec::new()),
+        // Exit code 1: the merge has conflicts. The tree's id comes
+        // first, then each conflicted path, once per stage.
+        Err(error) if error.exit_code == Some(1) => {
+            let mut paths: Vec<RepoPath> = out
+                .split(|&byte| byte == 0)
+                .skip(1)
+                .filter(|path| !path.is_empty())
+                .map(|path| RepoPath(path.to_vec()))
+                .collect();
+            paths.dedup();
+            Ok(paths)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub fn rebase(runner: &GitRunner, git_dir: &Path, onto: &str) -> Result<(), GitError> {

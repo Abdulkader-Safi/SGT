@@ -19,7 +19,8 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
-| M9 and M10 | Not started |
+| M9: history tools | Started: conflict prediction is built. Blame and file history came with M12. Interactive rebase, word diff and the whitespace toggle, compare two refs and the reflog are still to do |
+| M10: comfort | Not started |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
@@ -508,6 +509,17 @@ All three systems pass fmt, clippy and every test as of commit `Port step 4`. Ge
 - Launching `Safi Git Tree.app` from Finder. The app is not signed, so the first launch needs a right-click and "Open".
 - A network monitor run while browsing, to confirm what the dependency check says.
 - `tree-sitter-graphql` has no licence field in its manifest (its LICENSE file is MIT). `cargo deny` warns about it. It comes in through the kit even though the app does not use that grammar.
+
+## M9: history tools
+
+### Conflict prediction (built)
+
+- The merge and rebase dialogs run `git merge-tree --write-tree --name-only` between HEAD and the other branch as soon as they open. They say "No conflicts expected", or how many files would conflict, and list up to eight.
+- Nothing changes in the working tree, the index or the refs. Git does write the trial result's objects, so the prediction needs a trusted repository, as merging does.
+- A rebase is predicted as one three-way merge. Replayed commit by commit it can conflict where the whole does not, or the other way round.
+- If the prediction fails, the dialog says nothing about conflicts: the merge itself reports the problem.
+
+Still needs a check by eye: the dialog with and without conflicts.
 
 ## M12: blame, file history, worktrees and agent sessions
 

@@ -533,6 +533,78 @@ fn flow(from: &str, to: &str, p: Palette) -> AnyElement {
         .into_any_element()
 }
 
+/// What a merge of `theirs` into HEAD would conflict on: `None` while Git
+/// works it out.
+type Prediction = Entity<Option<Result<Vec<gittree_core::model::RepoPath>, ()>>>;
+
+/// Starts working out the conflicts in the background (FR-MERGE-06).
+fn predict(
+    repo: &Entity<RepoState>,
+    theirs: String,
+    window: &mut Window,
+    cx: &mut App,
+) -> Prediction {
+    let state: Prediction = cx.new(|_| None);
+    let runner = repo.read(cx).runner.clone();
+    let task = cx.background_spawn(async move {
+        gittree_core::ops::merge::predict_conflicts(&runner, &theirs).map_err(drop)
+    });
+    let handle = state.clone();
+    window
+        .spawn(cx, async move |cx| {
+            let result = task.await;
+            let _ = cx.update(|window, cx| {
+                handle.update(cx, |state, _| *state = Some(result));
+                window.refresh();
+            });
+        })
+        .detach();
+    state
+}
+
+/// The prediction as a line, and the files when there are any. A failed
+/// prediction shows nothing: the merge itself will say what is wrong.
+fn prediction_note(state: &Prediction, cx: &App) -> AnyElement {
+    let p = palette(cx);
+    let line = |icon: &str, text: String, color| {
+        h_flex()
+            .gap(px(6.))
+            .text_size(px(12.))
+            .text_color(color)
+            .child(ic(icon, 14., color))
+            .child(text)
+    };
+    match state.read(cx) {
+        None => line(
+            "refresh",
+            t!("merge.predicting").into_owned(),
+            p.text_tertiary,
+        )
+        .into_any_element(),
+        Some(Ok(files)) if files.is_empty() => {
+            line("check", t!("merge.no_conflicts").into_owned(), p.success).into_any_element()
+        }
+        Some(Ok(files)) => v_flex()
+            .gap(px(4.))
+            .child(line(
+                "warning",
+                t!("merge.conflicts_ahead", count = files.len()).into_owned(),
+                p.warning,
+            ))
+            .children(files.iter().take(8).map(|file| {
+                div()
+                    .pl(px(20.))
+                    .truncate()
+                    .font_family(super::graph::mono(cx))
+                    .text_size(px(12.))
+                    .text_color(p.text_secondary)
+                    .child(file.to_string())
+            }))
+            .into_any_element(),
+        Some(Err(())) => div().into_any_element(),
+    }
+}
+
 pub fn merge(
     repo: Entity<RepoState>,
     branch: String,
@@ -542,6 +614,7 @@ pub fn merge(
 ) {
     let no_ff = cx.new(|_| false);
     let (body_no_ff, from, to) = (no_ff.clone(), branch.clone(), into.clone());
+    let conflicts = predict(&repo, branch.clone(), window, cx);
     form(
         t!("merge.merge_title", into = into).into_owned(),
         Some(t!("merge.merge_text", branch = branch, into = into).into_owned()),
@@ -557,6 +630,7 @@ pub fn merge(
                     &body_no_ff,
                     cx,
                 ))
+                .child(prediction_note(&conflicts, cx))
                 .into_any_element()
         },
         move |_, cx| {
@@ -580,12 +654,19 @@ pub fn rebase(
     cx: &mut App,
 ) {
     let (from, to) = (current.clone(), onto.clone());
+    let conflicts = predict(&repo, onto.clone(), window, cx);
     form(
         t!("merge.rebase_title", branch = current).into_owned(),
         Some(t!("merge.rebase_text", branch = current, onto = onto).into_owned()),
         t!("merge.rebase").into_owned(),
         None,
-        move |_, cx| flow(&from, &to, palette(cx)),
+        move |_, cx| {
+            v_flex()
+                .gap(px(14.))
+                .child(flow(&from, &to, palette(cx)))
+                .child(prediction_note(&conflicts, cx))
+                .into_any_element()
+        },
         move |_, cx| {
             let op = Op::Rebase(onto.clone());
             repo.update(cx, |repo, cx| repo.run_op(op, cx));

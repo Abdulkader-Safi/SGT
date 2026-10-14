@@ -220,6 +220,28 @@ fn reset_has_three_modes_and_undo_brings_everything_back() {
 }
 
 #[test]
+fn conflicts_are_predicted_without_changing_anything() {
+    let repo = diverged();
+    let runner = repo.runner(true);
+    let before = repo.git(1, &["status", "--porcelain"]);
+    assert_eq!(
+        merge::predict_conflicts(&runner, "side").unwrap(),
+        ["f.txt".into()]
+    );
+    assert_eq!(head(&repo), repo.git(1, &["rev-parse", "main"]));
+    assert_eq!(repo.git(1, &["status", "--porcelain"]), before);
+    assert!(merge::in_progress(&runner, &git_dir(&repo)).is_none());
+    // A merge with no overlap predicts none.
+    assert!(
+        merge::predict_conflicts(&runner, "HEAD~1")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(merge::predict_conflicts(&runner, "--output=x").is_err());
+    assert!(merge::predict_conflicts(&repo.runner(false), "side").is_err());
+}
+
+#[test]
 fn an_untrusted_repository_refuses_all_of_it() {
     let repo = diverged();
     let (runner, dir) = (repo.runner(false), git_dir(&repo));

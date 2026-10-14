@@ -1315,6 +1315,111 @@ pub fn snapshots(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
     });
 }
 
+/// Where HEAD has been, with "Create branch" on each step (FR-UNDO-03).
+// ponytail: the last 200 steps of HEAD's reflog. Branch reflogs and paging
+// wait until someone needs them.
+pub fn reflog(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
+    let entries: Entity<Option<Vec<gittree_core::ops::read::ReflogEntry>>> = cx.new(|_| None);
+    let runner = repo.read(cx).runner.clone();
+    let task = cx.background_spawn(async move {
+        gittree_core::ops::read::reflog(&runner, 200).unwrap_or_default()
+    });
+    let handle = entries.clone();
+    window
+        .spawn(cx, async move |cx| {
+            let read = task.await;
+            let _ = cx.update(|window, cx| {
+                handle.update(cx, |entries, _| *entries = Some(read));
+                window.refresh();
+            });
+        })
+        .detach();
+    window.open_alert_dialog(cx, move |alert, _, cx| {
+        let p = palette(cx);
+        let state = repo.read(cx);
+        let can_branch = state.repository.trusted && !state.busy;
+        let font = super::graph::mono(cx);
+        let note = |text: String| {
+            div()
+                .p_6()
+                .text_center()
+                .text_color(p.text_secondary)
+                .child(text)
+        };
+        let list = match entries.read(cx) {
+            None => note(t!("reflog.loading").into_owned()).into_any_element(),
+            Some(read) if read.is_empty() => {
+                note(t!("reflog.empty").into_owned()).into_any_element()
+            }
+            Some(read) => v_flex()
+                .id("reflog")
+                .max_h(px(400.))
+                .overflow_y_scroll()
+                .children(read.iter().enumerate().map(|(ix, entry)| {
+                    let short: String = entry.oid.chars().take(7).collect();
+                    let (repo, oid, label) = (repo.clone(), entry.oid.to_string(), short.clone());
+                    h_flex()
+                        .min_h(px(40.))
+                        .px_3()
+                        .gap_3()
+                        .border_b_1()
+                        .border_color(p.border)
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_family(font.clone())
+                                .text_size(px(12.))
+                                .text_color(p.text_secondary)
+                                .child(short),
+                        )
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .overflow_hidden()
+                                .child(div().truncate().child(entry.message.clone()))
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(p.text_tertiary)
+                                        .child(crate::local_time(entry.time)),
+                                ),
+                        )
+                        .child(
+                            Button::new(("reflog-branch", ix))
+                                .xsmall()
+                                .label(t!("reflog.branch").into_owned())
+                                .disabled(!can_branch)
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    create_branch(
+                                        repo.clone(),
+                                        oid.clone(),
+                                        label.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }),
+                        )
+                }))
+                .into_any_element(),
+        };
+        alert
+            .width(px(600.))
+            .title(t!("reflog.title").into_owned())
+            .description(t!("reflog.text").into_owned())
+            .child(
+                div()
+                    .rounded(px(8.))
+                    .overflow_hidden()
+                    .bg(p.bg_panel)
+                    .border_1()
+                    .border_color(p.border)
+                    .child(list),
+            )
+            .ok_text(t!("snapshots.close").into_owned())
+    });
+}
+
 use gittree_core::agent::{self, AgentKind};
 use gpui_kit::component::input::{Textarea, TextareaState};
 

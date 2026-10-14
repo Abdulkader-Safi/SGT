@@ -19,7 +19,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
-| M9: history tools | Started: conflict prediction is built. Blame and file history came with M12. Interactive rebase, word diff and the whitespace toggle, compare two refs and the reflog are still to do |
+| M9: history tools | Started: conflict prediction and the reflog are built. Blame and file history came with M12. Interactive rebase, word diff and the whitespace toggle, and compare two refs are still to do |
 | M10: comfort | Not started |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
@@ -520,6 +520,15 @@ All three systems pass fmt, clippy and every test as of commit `Port step 4`. Ge
 - If the prediction fails, the dialog says nothing about conflicts: the merge itself reports the problem.
 
 Still needs a check by eye: the dialog with and without conflicts.
+
+### Reflog (built)
+
+- "Reflog…" in the Repository menu and the palette opens a list of where HEAD has been, newest first: short id, Git's own description of the step, and its time.
+- "Create branch" on any step opens the usual new-branch dialog at that commit. This is how a commit lost to a reset or a rebase comes back.
+- It reads only, so it also works in an untrusted repository. Making the branch needs trust, as everywhere.
+- Only HEAD's reflog, the last 200 steps. Branch reflogs and paging are not built.
+
+Still needs a check by eye: the dialog with a long reflog.
 
 ## M12: blame, file history, worktrees and agent sessions
 

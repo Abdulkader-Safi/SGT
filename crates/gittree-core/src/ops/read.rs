@@ -432,3 +432,54 @@ pub fn quote_path(prefix: &[u8], path: &[u8]) -> Vec<u8> {
     out.push(b'"');
     out
 }
+
+/// One step HEAD took, newest first in `reflog`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReflogEntry {
+    pub oid: Oid,
+    /// Seconds since 1970, when HEAD moved.
+    pub time: i64,
+    /// What moved it, in Git's words, such as "commit: Fix the parser".
+    pub message: String,
+}
+
+/// Where HEAD has been, newest first, at most `limit` steps (FR-UNDO-03).
+pub fn reflog(runner: &GitRunner, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
+    let limit = format!("-n{limit}");
+    // With --date=unix, %gd is "HEAD@{<time>}". Fields end in 0x1f,
+    // entries in NUL.
+    let out = runner.read([
+        "log",
+        "-g",
+        "--date=unix",
+        "--format=%H%x1f%gd%x1f%gs",
+        "-z",
+        &limit,
+        "HEAD",
+    ]);
+    let out = match out {
+        Ok(out) => out,
+        // A repository with no commits has no reflog yet.
+        Err(error) if error.exit_code == Some(128) => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    Ok(out
+        .split(|&byte| byte == 0)
+        .filter_map(|entry| {
+            let entry = String::from_utf8_lossy(entry);
+            let mut fields = entry.splitn(3, '\x1f');
+            let (oid, selector, message) = (fields.next()?, fields.next()?, fields.next()?);
+            let time = selector
+                .split_once("@{")?
+                .1
+                .trim_end_matches('}')
+                .parse()
+                .ok()?;
+            Some(ReflogEntry {
+                oid: oid.trim().into(),
+                time,
+                message: message.to_owned(),
+            })
+        })
+        .collect())
+}

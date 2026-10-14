@@ -569,6 +569,14 @@ snapshots:
   close: "Close"
   menu: "Snapshots…"
 
+reflog:
+  menu: "Reflog…"
+  title: "Reflog"
+  text: "Every commit HEAD has pointed at, newest first, also those no branch reaches any more. Git keeps them for 90 days."
+  loading: "Reading the reflog…"
+  empty: "The reflog is empty."
+  branch: "Create branch"
+
 palette:
   placeholder: "Type a command, a branch or a tag"
   commands: "Commands"

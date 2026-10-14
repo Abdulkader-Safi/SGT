@@ -3,7 +3,7 @@ mod common;
 use common::TestRepo;
 use gittree_core::model::{Change, DiffKind, LineKind, Oid, RefKind};
 use gittree_core::ops::read::{
-    LARGE_DIFF_SHOWN, commit_details, commit_files, diff_commit_file, list_refs,
+    LARGE_DIFF_SHOWN, commit_details, commit_files, diff_commit_file, list_refs, reflog,
 };
 
 fn write(repo: &TestRepo, name: &str, content: &[u8]) {
@@ -199,4 +199,31 @@ fn binary_files_report_sizes_and_huge_diffs_are_cut() {
         (DiffKind::TooLarge { lines: 25_001 }, LARGE_DIFF_SHOWN)
     );
     assert_eq!(count(true), (DiffKind::Text, 25_001));
+}
+
+#[test]
+fn the_reflog_lists_where_head_has_been_newest_first() {
+    let repo = TestRepo::new();
+    assert!(reflog(&repo.runner(false), 10).unwrap().is_empty());
+    write(&repo, "a.txt", b"one\n");
+    let first = commit_all(&repo, 1_000, "first");
+    write(&repo, "a.txt", b"two\n");
+    let second = commit_all(&repo, 2_000, "second");
+    repo.git(3_000, &["reset", "-q", "--hard", "HEAD~1"]);
+
+    // Read-only, so an untrusted repository shows it too.
+    let entries = reflog(&repo.runner(false), 10).unwrap();
+    let seen: Vec<(&str, i64, &str)> = entries
+        .iter()
+        .map(|entry| (&*entry.oid, entry.time, entry.message.as_str()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (&*first, 3_000, "reset: moving to HEAD~1"),
+            (&*second, 2_000, "commit: second"),
+            (&*first, 1_000, "commit (initial): first"),
+        ]
+    );
+    assert_eq!(reflog(&repo.runner(false), 1).unwrap().len(), 1);
 }

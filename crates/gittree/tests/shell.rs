@@ -1337,6 +1337,57 @@ fn the_merge_dialog_predicts_conflicts(cx: &mut TestAppContext) {
     assert_eq!(String::from_utf8(head.stdout).unwrap(), "main\n");
 }
 
+/// FR-UNDO-03: the reflog lists where HEAD has been, and any step can
+/// become a branch.
+#[gpui_kit::test]
+fn the_reflog_lists_heads_steps(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("f.txt"), "one\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "first"]);
+    git(
+        dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "second"],
+    );
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    shell.in_window(cx, |window, cx| {
+        window.dispatch_action(Box::new(gittree::actions::ShowReflog), cx)
+    });
+    let mut found = false;
+    for _ in 0..200 {
+        found = shell.in_window(cx, |window, _| {
+            window.try_find(("reflog-branch", 1usize)).is_some()
+        });
+        if found {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(found, "both steps are listed");
+    // The oldest step opens "Create branch" at its commit.
+    // Let the dialog's opening animation end, so the click lands.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |_, _| ());
+    shell.in_window(cx, |window, cx| window.click(("reflog-branch", 1usize), cx));
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |window, cx| window.input("from-reflog", cx));
+    shell.in_window(cx, |window, cx| window.press("enter", cx));
+    let at = |rev: &str| {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(["rev-parse", rev])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_eq!(at("from-reflog"), at("main~1"));
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

@@ -27,6 +27,7 @@ actions!(
         Commit,
         StageSelection,
         ShowSnapshots,
+        ShowReflog,
         Refresh,
         Fetch,
         Pull,
@@ -69,6 +70,7 @@ pub fn commands() -> Vec<(
         ("menu.search", "search", "⌘F", Box::new(SearchCommits)),
         ("menu.toggle_diff", "split", "⇧⌘D", Box::new(ToggleDiffView)),
         ("snapshots.menu", "clock", "", Box::new(ShowSnapshots)),
+        ("reflog.menu", "clock", "", Box::new(ShowReflog)),
         ("menu.trust", "shield", "", Box::new(TrustRepository)),
     ]
 }

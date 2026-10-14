@@ -1391,6 +1391,103 @@ pub fn snapshots(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
     });
 }
 
+/// Every Git command the app ran for this repository in this session,
+/// newest first: when, how long, how it ended, and what Git said on a
+/// failure (FR-STATE-05). A list taken when the dialog opens.
+pub fn activity(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
+    let mut records = repo.read(cx).runner.activity();
+    records.reverse();
+    window.open_alert_dialog(cx, move |alert, _, cx| {
+        let p = palette(cx);
+        let font = super::graph::mono(cx);
+        let rows = records.iter().enumerate().map(|(ix, record)| {
+            let failed = record.exit_code != 0;
+            let ended = if record.exit_code == -1 {
+                t!("activity.stopped").into_owned()
+            } else {
+                t!("activity.exit", code = record.exit_code).into_owned()
+            };
+            v_flex()
+                .id(("activity", ix))
+                .px_3()
+                .py(px(6.))
+                .gap(px(2.))
+                .border_b_1()
+                .border_color(p.border)
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .text_size(px(12.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .truncate()
+                                .font_family(font.clone())
+                                .child(format!("git {}", record.args.join(" "))),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(p.text_tertiary)
+                                .child(format!("{} ms", record.duration_ms)),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(if failed { p.danger } else { p.text_tertiary })
+                                .child(ended),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(p.text_tertiary)
+                        .child(crate::local_time(record.time)),
+                )
+                .when(failed && !record.stderr.trim().is_empty(), |row| {
+                    let said: String = record
+                        .stderr
+                        .trim()
+                        .lines()
+                        .take(4)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    row.child(
+                        div()
+                            .font_family(font.clone())
+                            .text_size(px(11.))
+                            .text_color(p.danger)
+                            .child(said),
+                    )
+                })
+        });
+        let empty = records.is_empty().then(|| {
+            div()
+                .p_6()
+                .text_center()
+                .text_color(p.text_secondary)
+                .child(t!("activity.empty").into_owned())
+        });
+        alert
+            .width(px(720.))
+            .title(t!("activity.title").into_owned())
+            .description(t!("activity.text").into_owned())
+            .child(
+                v_flex()
+                    .id("activity-list")
+                    .max_h(px(420.))
+                    .overflow_y_scroll()
+                    .rounded(px(8.))
+                    .bg(p.bg_panel)
+                    .border_1()
+                    .border_color(p.border)
+                    .children(rows)
+                    .children(empty),
+            )
+            .ok_text(t!("snapshots.close").into_owned())
+    });
+}
+
 /// Where HEAD has been, with "Create branch" on each step (FR-UNDO-03).
 // ponytail: the last 200 steps of HEAD's reflog. Branch reflogs and paging
 // wait until someone needs them.

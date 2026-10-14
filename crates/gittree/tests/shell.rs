@@ -1572,6 +1572,32 @@ fn a_stash_becomes_a_branch(cx: &mut TestAppContext) {
     );
 }
 
+/// FR-STATE-05: the activity log lists the Git commands the app ran.
+#[gpui_kit::test]
+fn the_activity_log_opens_with_the_commands_run(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    let ran = cx.update(|cx| repo.read(cx).runner.activity());
+    assert!(
+        ran.iter()
+            .any(|record| record.args.first().is_some_and(|a| a == "status"))
+    );
+    shell.in_window(cx, |window, cx| {
+        window.dispatch_action(Box::new(gittree::actions::ShowActivity), cx)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |_, _| ());
+    assert!(shell.in_window(cx, |window, _| window.try_find("ok").is_some()));
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

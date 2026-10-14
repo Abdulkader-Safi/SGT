@@ -711,6 +711,11 @@ impl Render for Workspace {
                 }),
             )
             .on_action(
+                cx.listener(|this, _: &crate::actions::ShowActivity, window, cx| {
+                    dialogs::activity(this.repo.clone(), window, cx)
+                }),
+            )
+            .on_action(
                 cx.listener(|this, _: &crate::actions::CommandPalette, window, cx| {
                     super::palette::open(
                         this.repo.clone(),

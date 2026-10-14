@@ -612,6 +612,14 @@ compare:
   same: "No files differ."
   count: "%{count} files differ, as To has them against From."
 
+activity:
+  menu: "Activity log…"
+  title: "Activity log"
+  text: "The Git commands the app ran for this repository since it opened, newest first, up to 500. Passwords in addresses are removed. The full log is also written to a file."
+  exit: "exit %{code}"
+  stopped: "stopped"
+  empty: "No Git commands yet."
+
 reflog:
   menu: "Reflog…"
   title: "Reflog"

@@ -28,6 +28,7 @@ actions!(
         StageSelection,
         ShowSnapshots,
         ShowReflog,
+        ShowActivity,
         Refresh,
         Fetch,
         Pull,
@@ -71,6 +72,7 @@ pub fn commands() -> Vec<(
         ("menu.toggle_diff", "split", "⇧⌘D", Box::new(ToggleDiffView)),
         ("snapshots.menu", "clock", "", Box::new(ShowSnapshots)),
         ("reflog.menu", "clock", "", Box::new(ShowReflog)),
+        ("activity.menu", "info", "", Box::new(ShowActivity)),
         ("menu.trust", "shield", "", Box::new(TrustRepository)),
     ]
 }

@@ -14,24 +14,27 @@ use crate::runner::{Access, GitRunner};
 
 pub const LOG_BATCH: usize = 2_000;
 
-const LOG_ARGS: [&str; 6] = [
-    "log",
-    // The app's snapshot refs must not show up as history.
-    "--exclude=refs/gittree/*",
-    "--all",
-    "--date-order",
-    "-z",
-    LOG_FORMAT,
-];
-
-/// Streams every commit reachable from any ref, newest first, in batches of
-/// `LOG_BATCH`. Setting `cancel` stops it with `Cancelled`.
+/// Streams every commit reachable from any ref but the `hidden` ones (full
+/// names, such as `refs/heads/old`), newest first, in batches of
+/// `LOG_BATCH`. A hidden branch's commits still show when another ref
+/// reaches them. Setting `cancel` stops it with `Cancelled`.
 pub fn stream_log(
     runner: &GitRunner,
+    hidden: &[String],
     mut on_batch: impl FnMut(Vec<Commit>),
     cancel: &AtomicBool,
 ) -> Result<(), GitError> {
-    runner.run(Access::Read, LOG_ARGS, None, Some(cancel), |stdout| {
+    // The app's snapshot refs must not show up as history.
+    let mut args = vec!["log".to_owned(), "--exclude=refs/gittree/*".to_owned()];
+    // A ref name cannot hold a glob character, so each matches only itself.
+    args.extend(
+        hidden
+            .iter()
+            .filter(|name| name.starts_with("refs/"))
+            .map(|name| format!("--exclude={name}")),
+    );
+    args.extend(["--all", "--date-order", "-z", LOG_FORMAT].map(String::from));
+    runner.run(Access::Read, args, None, Some(cancel), |stdout| {
         let mut stdout = BufReader::with_capacity(1 << 16, stdout);
         let mut parser = LogParser::default();
         let mut record = Vec::new();

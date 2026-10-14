@@ -63,6 +63,7 @@ impl Sidebar {
         let repo = self.repo.clone();
         let target = r.target.clone();
         let name: SharedString = r.short_name().to_owned().into();
+        let hidden = self.repo.read(cx).hidden.contains(&r.name);
         let icon = match r.kind {
             RefKind::Local => "branch",
             RefKind::Remote => "remote",
@@ -96,7 +97,13 @@ impl Sidebar {
                     p.text_tertiary
                 },
             ))
-            .child(div().flex_1().truncate().child(name))
+            .child(
+                div()
+                    .flex_1()
+                    .truncate()
+                    .when(hidden, |name| name.text_color(p.text_tertiary).italic())
+                    .child(name),
+            )
             .when(!track.is_empty(), |row| {
                 row.child(
                     div()
@@ -112,6 +119,7 @@ impl Sidebar {
                 let behind = r.behind;
                 let short = r.short_name().to_owned();
                 let upstream = r.upstream.clone();
+                let full_name = r.name.clone();
                 move |menu, _, cx| {
                     let trusted = repo.read(cx).repository.trusted;
                     let head_name = match &repo.read(cx).repository.head {
@@ -141,6 +149,20 @@ impl Sidebar {
                                     cx,
                                 )
                             })
+                    };
+                    // HEAD always shows, so the current branch cannot hide.
+                    let hide_item = {
+                        let (repo, name) = (repo.clone(), full_name.clone());
+                        let shown = !repo.read(cx).hidden.contains(&name);
+                        PopupMenuItem::new(if shown {
+                            t!("menu_item.hide").into_owned()
+                        } else {
+                            t!("menu_item.show").into_owned()
+                        })
+                        .disabled(current)
+                        .on_click(move |_, _, cx| {
+                            repo.update(cx, |repo, cx| repo.toggle_hidden(name.clone(), cx))
+                        })
                     };
                     match kind {
                         RefKind::Local => {
@@ -241,6 +263,8 @@ impl Sidebar {
                                             .update(cx, |repo, cx| repo.delete_branch(name, cx))
                                     }),
                             )
+                            .separator()
+                            .item(hide_item)
                         }
                         RefKind::Remote => menu
                             .item(
@@ -248,7 +272,9 @@ impl Sidebar {
                                     .disabled(!trusted)
                                     .on_click(run(Op::Checkout(Target::Remote(short.clone())))),
                             )
-                            .item(branch_here),
+                            .item(branch_here)
+                            .separator()
+                            .item(hide_item),
                         RefKind::Tag => {
                             let (tag_repo, tag_name) = (repo.clone(), short.clone());
                             menu.item(

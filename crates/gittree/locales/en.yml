@@ -466,6 +466,8 @@ menu_item:
   compare: "Compare with %{branch}…"
   edit_after: "Edit commits after this…"
   set_upstream: "Set upstream…"
+  hide: "Hide in graph"
+  show: "Show in graph"
   drop_stash: "Drop…"
 
 merge:

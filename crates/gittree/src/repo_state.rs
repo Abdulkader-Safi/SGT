@@ -468,6 +468,9 @@ pub struct RepoState {
     pub sessions: Vec<Session>,
     /// The calls agents made through the MCP server, oldest first, and
     /// the changes waiting for a yes or no (FR-AGENT-02).
+    /// Branches left out of the graph, by full name, for this run of the
+    /// app (FR-GRAPH-06).
+    pub hidden: Vec<String>,
     /// The name and email Git puts on commits here. Empty when not set.
     pub identity: (String, String),
     identity_task: Task<()>,
@@ -596,6 +599,7 @@ impl RepoState {
             ai_task: Task::ready(()),
             explain_task: Task::ready(()),
             sessions: Vec::new(),
+            hidden: Vec::new(),
             identity: Default::default(),
             identity_task: Task::ready(()),
             ignore_whitespace: false,
@@ -1198,10 +1202,12 @@ impl RepoState {
         let (tx, batches) = smol::channel::unbounded::<Batch>();
         let runner = self.runner.clone();
         let cancel = self.log_cancel.clone();
+        let hidden = self.hidden.clone();
         let git = cx.background_spawn(async move {
             let mut layout = GraphLayout::default();
             read::stream_log(
                 &runner,
+                &hidden,
                 |commits| {
                     let rows = commits
                         .iter()
@@ -1870,6 +1876,17 @@ impl RepoState {
             view.picked = Some(oid);
             cx.notify();
         }
+    }
+
+    /// Hides a branch in the graph, or shows it again, and reads the graph
+    /// again without it.
+    pub fn toggle_hidden(&mut self, name: String, cx: &mut Context<Self>) {
+        match self.hidden.iter().position(|hidden| *hidden == name) {
+            Some(at) => drop(self.hidden.remove(at)),
+            None => self.hidden.push(name),
+        }
+        self.reload_log(cx);
+        cx.notify();
     }
 
     /// Reads the name and email Git will commit with (FR-SET-05).

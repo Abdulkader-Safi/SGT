@@ -1666,6 +1666,48 @@ fn the_identity_shows_and_changes_for_this_repository(cx: &mut TestAppContext) {
     );
 }
 
+/// FR-GRAPH-06: a hidden branch's own commits leave the graph, and come
+/// back when it is shown again.
+#[gpui_kit::test]
+fn a_branch_can_be_hidden_in_the_graph(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    git(
+        dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "first"],
+    );
+    git(dir.path(), &["switch", "-q", "-c", "side"]);
+    git(
+        dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "only on side"],
+    );
+    git(dir.path(), &["switch", "-q", "main"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    let summaries = |cx: &mut TestAppContext| {
+        for _ in 0..100 {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        cx.update(|cx| {
+            let commits = &repo.read(cx).history.commits;
+            commits
+                .iter()
+                .map(|c| c.summary.to_string())
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(summaries(cx), ["only on side", "first"]);
+    let side = "refs/heads/side".to_owned();
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.toggle_hidden(side.clone(), cx)));
+    assert_eq!(summaries(cx), ["first"]);
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.toggle_hidden(side.clone(), cx)));
+    assert_eq!(summaries(cx), ["only on side", "first"]);
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

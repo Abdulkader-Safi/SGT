@@ -11,6 +11,7 @@ fn load(repo: &TestRepo) -> Vec<Commit> {
     let mut commits = Vec::new();
     stream_log(
         &repo.runner(false),
+        &[],
         |batch| commits.extend(batch),
         &AtomicBool::new(false),
     )
@@ -78,6 +79,7 @@ fn delivers_batches_and_stops_when_cancelled() {
     let mut sizes = Vec::new();
     stream_log(
         &runner,
+        &[],
         |batch| sizes.push(batch.len()),
         &AtomicBool::new(false),
     )
@@ -88,6 +90,7 @@ fn delivers_batches_and_stops_when_cancelled() {
     let mut batches = 0;
     let result = stream_log(
         &runner,
+        &[],
         |_| {
             batches += 1;
             cancel.store(true, Ordering::Relaxed);
@@ -103,9 +106,33 @@ fn a_folder_that_is_not_a_repository_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let error = stream_log(
         &GitRunner::new("git", dir.path(), false),
+        &[],
         |_| {},
         &AtomicBool::new(false),
     )
     .unwrap_err();
     assert_eq!(error.kind, GitErrorKind::NotARepository, "{error}");
+}
+
+#[test]
+fn a_hidden_branch_leaves_out_only_its_own_commits() {
+    let repo = TestRepo::new();
+    repo.git(100, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    repo.git(0, &["switch", "-q", "-c", "side"]);
+    repo.git(
+        200,
+        &["commit", "-q", "--allow-empty", "-m", "only on side"],
+    );
+    repo.git(0, &["switch", "-q", "main"]);
+    repo.git(300, &["commit", "-q", "--allow-empty", "-m", "on main"]);
+    let mut commits = Vec::new();
+    stream_log(
+        &repo.runner(false),
+        &["refs/heads/side".to_owned(), "--output=x".to_owned()],
+        |batch| commits.extend(batch),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    let summaries: Vec<&str> = commits.iter().map(|c| &*c.summary).collect();
+    assert_eq!(summaries, ["on main", "first"]);
 }

@@ -449,6 +449,7 @@ menu_item:
   delete_branch: "Delete branch…"
   delete_tag: "Delete tag…"
   copy_hash: "Copy hash"
+  compare: "Compare with %{branch}…"
   drop_stash: "Drop…"
 
 merge:
@@ -568,6 +569,15 @@ snapshots:
   undone: "undone"
   close: "Close"
   menu: "Snapshots…"
+
+compare:
+  title: "Compare"
+  from: "From"
+  to: "To"
+  action: "Compare"
+  loading: "Comparing…"
+  same: "No files differ."
+  count: "%{count} files differ, as To has them against From."
 
 reflog:
   menu: "Reflog…"

@@ -1388,6 +1388,34 @@ fn the_reflog_lists_heads_steps(cx: &mut TestAppContext) {
     assert_eq!(at("from-reflog"), at("main~1"));
 }
 
+/// FR-DIFF-07: the compare dialog lists the files that differ between two
+/// revisions, and Compare reads them again for new ones.
+#[gpui_kit::test]
+fn the_compare_dialog_lists_files_that_differ(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "first"]);
+    std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+    git(dir.path(), &["commit", "-q", "-am", "second"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    // Reading only, so an untrusted repository can compare too.
+    shell.in_window(cx, |window, cx| {
+        gittree::views::dialogs::compare(repo, "main~1".into(), "main".into(), window, cx)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |_, _| ());
+    assert!(shell.in_window(cx, |window, _| window.try_find("compare-from").is_some()));
+    // Compare reads the list again and keeps the dialog open.
+    shell.in_window(cx, |window, cx| window.click("ok", cx));
+    assert!(shell.in_window(cx, |window, _| window.try_find("compare-to").is_some()));
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

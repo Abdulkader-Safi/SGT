@@ -1420,6 +1420,134 @@ pub fn reflog(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
     });
 }
 
+/// The files that differ between two branches, tags or commits
+/// (FR-DIFF-07). Both ends can be edited, and Compare reads the list again.
+// ponytail: a list of files. Opening a file's diff from here is not built:
+// the commit details already show diffs one commit at a time.
+pub fn compare(
+    repo: Entity<RepoState>,
+    from: String,
+    to: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    type Files = Option<Result<Vec<gittree_core::model::FileChange>, String>>;
+    let files: Entity<Files> = cx.new(|_| None);
+    let from_input = text_input(&from, String::new(), window, cx);
+    let to_input = text_input(&to, String::new(), window, cx);
+    let runner = repo.read(cx).runner.clone();
+    let load = Rc::new({
+        let files = files.clone();
+        move |from: String, to: String, window: &mut Window, cx: &mut App| {
+            files.update(cx, |files, _| *files = None);
+            let runner = runner.clone();
+            let task = cx.background_spawn(async move {
+                gittree_core::ops::read::compare(&runner, &from, &to)
+                    .map_err(|error| error.stderr.trim().to_owned())
+            });
+            let files = files.clone();
+            window
+                .spawn(cx, async move |cx| {
+                    let read = task.await;
+                    let _ = cx.update(|window, cx| {
+                        files.update(cx, |files, _| *files = Some(read));
+                        window.refresh();
+                    });
+                })
+                .detach();
+        }
+    });
+    load(from, to, window, cx);
+    let shown = (from_input.clone(), to_input.clone(), files.clone());
+    form(
+        t!("compare.title").into_owned(),
+        None,
+        t!("compare.action").into_owned(),
+        Some(from_input.clone()),
+        move |_, cx| {
+            let p = palette(cx);
+            let (from, to, files) = &shown;
+            let font = super::graph::mono(cx);
+            let note = |text: String, color| {
+                div()
+                    .py_2()
+                    .text_size(px(12.))
+                    .text_color(color)
+                    .child(text)
+            };
+            let list = match files.read(cx) {
+                None => {
+                    note(t!("compare.loading").into_owned(), p.text_tertiary).into_any_element()
+                }
+                Some(Err(problem)) => note(problem.clone(), p.danger).into_any_element(),
+                Some(Ok(list)) if list.is_empty() => {
+                    note(t!("compare.same").into_owned(), p.text_tertiary).into_any_element()
+                }
+                Some(Ok(list)) => v_flex()
+                    .gap(px(4.))
+                    .child(note(
+                        t!("compare.count", count = list.len()).into_owned(),
+                        p.text_secondary,
+                    ))
+                    .child(
+                        v_flex()
+                            .id("compare-files")
+                            .max_h(px(300.))
+                            .overflow_y_scroll()
+                            .children(list.iter().map(|file| {
+                                h_flex()
+                                    .gap(px(8.))
+                                    .h(px(24.))
+                                    .text_size(px(12.))
+                                    .child(
+                                        super::ui::status_mark(file.change, false, p)
+                                            .font_family(font.clone()),
+                                    )
+                                    .child(
+                                        div().flex_1().truncate().font_family(font.clone()).child(
+                                            match &file.orig_path {
+                                                Some(old) => format!("{old} → {}", file.path),
+                                                None => file.path.to_string(),
+                                            },
+                                        ),
+                                    )
+                            })),
+                    )
+                    .into_any_element(),
+            };
+            v_flex()
+                .gap(px(14.))
+                .child(
+                    h_flex()
+                        .gap(px(10.))
+                        .child(div().flex_1().child(field(
+                            t!("compare.from").into_owned(),
+                            Input::new(from).id("compare-from").small(),
+                            None,
+                            p,
+                        )))
+                        .child(div().flex_1().child(field(
+                            t!("compare.to").into_owned(),
+                            Input::new(to).id("compare-to").small(),
+                            None,
+                            p,
+                        ))),
+                )
+                .child(list)
+                .into_any_element()
+        },
+        move |window, cx| {
+            let from = from_input.read(cx).value().trim().to_owned();
+            let to = to_input.read(cx).value().trim().to_owned();
+            load(from, to, window, cx);
+            // The list updates in place. Cancel closes the dialog.
+            false
+        },
+        window,
+        cx,
+    );
+}
+
 use gittree_core::agent::{self, AgentKind};
 use gpui_kit::component::input::{Textarea, TextareaState};
 

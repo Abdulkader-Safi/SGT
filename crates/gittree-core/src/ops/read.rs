@@ -166,6 +166,29 @@ pub fn commit_files(runner: &GitRunner, oid: &Oid) -> Result<Vec<FileChange>, Gi
         "--diff-merges=first-parent",
         oid,
     ])?;
+    Ok(parse_name_status(&out))
+}
+
+/// The files that differ between two branches, tags or commits, as `to`
+/// has them against `from` (FR-DIFF-07).
+pub fn compare(runner: &GitRunner, from: &str, to: &str) -> Result<Vec<FileChange>, GitError> {
+    for rev in [from, to] {
+        if rev.is_empty() || rev.starts_with('-') {
+            return Err(GitError {
+                kind: crate::error::GitErrorKind::Other,
+                args: Vec::new(),
+                exit_code: None,
+                stderr: "A revision cannot be empty or start with a dash.".into(),
+            });
+        }
+    }
+    let out = runner.read(["diff", "-z", "--name-status", "-M", from, to, "--"])?;
+    Ok(parse_name_status(&out))
+}
+
+/// `--name-status -z` output: a status, then one path, or two for a
+/// rename or copy.
+fn parse_name_status(out: &[u8]) -> Vec<FileChange> {
     let mut fields = out.split(|&b| b == 0);
     let mut files = Vec::new();
     while let Some(status) = fields.next().filter(|status| !status.is_empty()) {
@@ -189,7 +212,7 @@ pub fn commit_files(runner: &GitRunner, oid: &Oid) -> Result<Vec<FileChange>, Gi
             orig_path,
         });
     }
-    Ok(files)
+    files
 }
 
 /// A diff longer than this is cut to `LARGE_DIFF_SHOWN` lines until the user

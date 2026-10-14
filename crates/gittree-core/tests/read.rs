@@ -3,7 +3,7 @@ mod common;
 use common::TestRepo;
 use gittree_core::model::{Change, DiffKind, LineKind, Oid, RefKind};
 use gittree_core::ops::read::{
-    LARGE_DIFF_SHOWN, commit_details, commit_files, diff_commit_file, list_refs, reflog,
+    LARGE_DIFF_SHOWN, commit_details, commit_files, compare, diff_commit_file, list_refs, reflog,
 };
 
 fn write(repo: &TestRepo, name: &str, content: &[u8]) {
@@ -226,4 +226,38 @@ fn the_reflog_lists_where_head_has_been_newest_first() {
         ]
     );
     assert_eq!(reflog(&repo.runner(false), 1).unwrap().len(), 1);
+}
+
+#[test]
+fn compares_any_two_revisions_by_file() {
+    let repo = TestRepo::new();
+    write(&repo, "a.txt", b"one\n");
+    write(&repo, "b.txt", b"bee\n");
+    commit_all(&repo, 1, "first");
+    repo.git(1, &["tag", "v1"]);
+    write(&repo, "a.txt", b"two\n");
+    std::fs::remove_file(repo.path().join("b.txt")).unwrap();
+    write(&repo, "c.txt", b"new\n");
+    commit_all(&repo, 2, "second");
+
+    let files = compare(&repo.runner(false), "v1", "HEAD").unwrap();
+    let seen: Vec<(Change, String)> = files
+        .iter()
+        .map(|file| (file.change, file.path.to_string()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (Change::Modified, "a.txt".into()),
+            (Change::Deleted, "b.txt".into()),
+            (Change::Added, "c.txt".into()),
+        ]
+    );
+    assert!(
+        compare(&repo.runner(false), "HEAD", "HEAD")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(compare(&repo.runner(false), "--output=x", "HEAD").is_err());
+    assert!(compare(&repo.runner(false), "nope", "HEAD").is_err());
 }

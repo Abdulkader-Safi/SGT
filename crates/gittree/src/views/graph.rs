@@ -456,6 +456,16 @@ fn commit_menu(
                 dialogs::reset(repo.clone(), branch.clone(), target.clone(), window, cx)
             })
     })
+    .item({
+        // The short hash, so the field holds something Git can read.
+        let from: String = oid.chars().take(7).collect();
+        let (repo, to) = (repo.clone(), head_name.clone());
+        PopupMenuItem::new(t!("menu_item.compare", branch = head_name).into_owned())
+            .icon(crate::icons::icon("split"))
+            .on_click(move |_, window, cx| {
+                dialogs::compare(repo.clone(), from.clone(), to.clone(), window, cx)
+            })
+    })
     .separator()
     .item(
         item("copy", "menu_item.copy_hash").on_click(move |_, _, cx| {

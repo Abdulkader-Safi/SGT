@@ -19,7 +19,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
-| M9: history tools | Started: conflict prediction and the reflog are built. Blame and file history came with M12. Interactive rebase, word diff and the whitespace toggle, and compare two refs are still to do |
+| M9: history tools | Started: conflict prediction, the reflog and compare are built. Blame and file history came with M12. Interactive rebase, and word diff with the whitespace toggle, are still to do |
 | M10: comfort | Not started |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
@@ -529,6 +529,15 @@ Still needs a check by eye: the dialog with and without conflicts.
 - Only HEAD's reflog, the last 200 steps. Branch reflogs and paging are not built.
 
 Still needs a check by eye: the dialog with a long reflog.
+
+### Compare two revisions (built)
+
+- "Compare with {branch}…" in a commit's right-click menu opens a dialog with From set to that commit and To set to the current branch. Both fields take any branch, tag or commit, and Compare reads the list again.
+- It lists each file that differs with its change mark, and renames as old → new. A bad revision shows Git's own error in place of the list.
+- Reading only, so it works in an untrusted repository.
+- A file's diff does not open from the list. The commit details show diffs one commit at a time.
+
+Still needs a check by eye: the dialog with many files.
 
 ## M12: blame, file history, worktrees and agent sessions
 

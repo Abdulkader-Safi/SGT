@@ -25,6 +25,8 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dirs = "6"
 gittree-core = { path = "../gittree-core" }
+# Already linked through gittree-core. Reads keymap.json.
+serde_json = "1.0"
 # Only the grammars `views::diff::language_for` names. The kit's full set
 # adds about 20 MB to the app.
 gpui-kit = { version = "=0.7.3", features = [
@@ -58,5 +60,3 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 [dev-dependencies]
 gpui-kit = { version = "=0.7.3", features = ["test-support"] }
 tempfile = "3"
-# Already linked through gittree-core. The tests build MCP messages with it.
-serde_json = "1.0"

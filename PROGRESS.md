@@ -20,7 +20,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9: history tools | Built: interactive rebase, conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12. 161 tests pass. Waits on checks by eye |
-| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity, completion toasts, `change:` search, hiding branches, the signing error and the Insert menu are built. Still to do: `keymap.json`, high-contrast and user themes, and repository tabs. Zoom is on hold, see below |
+| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity, completion toasts, `change:` search, hiding branches, the signing error, the Insert menu and `keymap.json` are built. Still to do: high-contrast and user themes, and repository tabs. Zoom is on hold, see below |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
@@ -634,6 +634,13 @@ Still needs a check by eye: the dialog with many commits, and a reword with a lo
 - A summary replaces the summary field. A person adds `Co-authored-by: Name <email>` to the description, once, with trailers kept together after a blank line.
 - The template's comment lines are left out. It is read only in a trusted repository, so a cloned repository's config cannot point the app at another file.
 - Recent and co-author lists come from the commits already loaded in the graph.
+
+### keymap.json (built)
+
+- `keymap.json` in the app's data folder, next to `settings.json`, is a JSON object from keystrokes to a command: `{"secondary-shift-y": "Fetch"}`. A command is any action in `actions.rs`, with or without `gittree::`. `secondary` is Cmd on macOS and Ctrl elsewhere.
+- It is read with the other files off the UI thread at startup, and its bindings come after the defaults, so a key in both runs the user's command.
+- An entry that names no command, or has keys GPUI cannot read, is skipped and logged.
+- A binding is added, not swapped: the default keys still work, and the palette and menus show the default keys. A change needs a restart.
 
 ### Zoom (on hold)
 

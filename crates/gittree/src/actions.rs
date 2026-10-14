@@ -134,6 +134,69 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Zoom, cx| in_active_window(cx, |window| window.zoom_window()));
 }
 
+/// The bindings in `keymap.json`: an object from keystrokes to a command,
+/// such as `{"secondary-shift-k": "Push"}`. Names are the actions in this
+/// file, with or without the `gittree::` prefix. Returns the bindings and
+/// a line for each entry that could not be read.
+fn parse_keymap(text: &str) -> (Vec<(String, String)>, Vec<String>) {
+    if text.trim().is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let map: serde_json::Map<String, serde_json::Value> = match serde_json::from_str(text) {
+        Ok(map) => map,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!("keymap.json is not a JSON object: {error}")],
+            );
+        }
+    };
+    let mut bindings = Vec::new();
+    let mut problems = Vec::new();
+    for (keys, value) in map {
+        match value.as_str() {
+            Some(name) if name.contains("::") => bindings.push((keys, name.to_owned())),
+            Some(name) => bindings.push((keys, format!("gittree::{name}"))),
+            None => problems.push(format!("{keys}: the command must be a name in quotes")),
+        }
+    }
+    (bindings, problems)
+}
+
+/// Adds the user's own shortcuts from `keymap.json` (FR-CMD-03). They come
+/// after the defaults, so a key bound in both runs the user's command.
+// ponytail: a binding is added, not swapped: the old keys of a command
+// still work, and the palette and menus show the default keys. Problems
+// go to the log, not to a toast.
+pub fn load_keymap(text: &str, cx: &mut App) {
+    let (bindings, mut problems) = parse_keymap(text);
+    let mut loaded = Vec::new();
+    for (keys, name) in bindings {
+        let built = cx
+            .build_action(&name, None)
+            .map_err(|error| error.to_string());
+        let binding = built.and_then(|action| {
+            KeyBinding::load(
+                &keys,
+                action,
+                None,
+                false,
+                None,
+                cx.keyboard_mapper().as_ref(),
+            )
+            .map_err(|error| error.to_string())
+        });
+        match binding {
+            Ok(binding) => loaded.push(binding),
+            Err(error) => problems.push(format!("{keys}: {error}")),
+        }
+    }
+    for problem in problems {
+        tracing::warn!(%problem, "keymap.json");
+    }
+    cx.bind_keys(loaded);
+}
+
 fn in_active_window(cx: &mut App, act: impl FnOnce(&mut gpui_kit::Window)) {
     if let Some(window) = cx.active_window() {
         let _ = cx.update_window(window, |_, window, _| act(window));
@@ -165,4 +228,25 @@ fn pick_folder(cx: &mut App, pick: Pick) {
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keymap_entries_name_a_command_with_or_without_its_prefix() {
+        let (bindings, problems) =
+            parse_keymap(r#"{"secondary-k": "Push", "alt-p": "gittree::Pull", "ctrl-x": 3}"#);
+        assert_eq!(
+            bindings,
+            [
+                ("secondary-k".to_owned(), "gittree::Push".to_owned()),
+                ("alt-p".to_owned(), "gittree::Pull".to_owned()),
+            ]
+        );
+        assert_eq!(problems.len(), 1);
+        assert_eq!(parse_keymap("  ").1.len(), 0);
+        assert_eq!(parse_keymap("[1]").1.len(), 1);
+    }
 }

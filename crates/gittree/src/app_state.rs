@@ -16,6 +16,8 @@ pub struct Loaded {
     pub session: Session,
     pub recent: Recent,
     pub trust: TrustList,
+    /// The text of `keymap.json`, empty when there is none.
+    pub keymap: String,
 }
 
 impl Loaded {
@@ -26,6 +28,7 @@ impl Loaded {
             session: store.load(),
             recent: store.load(),
             trust: store.load(),
+            keymap: std::fs::read_to_string(store.dir().join("keymap.json")).unwrap_or_default(),
             store,
         }
     }
@@ -103,6 +106,7 @@ impl AppState {
             session,
             recent,
             trust,
+            ..
         } = loaded;
 
         // One task writes every file, in order, off the UI thread.

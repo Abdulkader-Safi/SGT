@@ -1708,6 +1708,28 @@ fn a_branch_can_be_hidden_in_the_graph(cx: &mut TestAppContext) {
     assert_eq!(summaries(cx), ["only on side", "first"]);
 }
 
+/// FR-CMD-03: an entry in keymap.json binds a key to a command, and a bad
+/// entry is skipped.
+#[gpui_kit::test]
+fn keymap_json_adds_a_binding(cx: &mut TestAppContext) {
+    use gittree::actions::{Fetch, load_keymap};
+
+    let before = cx.update(|cx| {
+        cx.key_bindings()
+            .borrow()
+            .bindings_for_action(&Fetch)
+            .count()
+    });
+    cx.update(|cx| load_keymap(r#"{"alt-shift-y": "Fetch", "alt-z": "NoSuchCommand"}"#, cx));
+    let after = cx.update(|cx| {
+        cx.key_bindings()
+            .borrow()
+            .bindings_for_action(&Fetch)
+            .count()
+    });
+    assert_eq!(after, before + 1);
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

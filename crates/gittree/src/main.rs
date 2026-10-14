@@ -71,12 +71,14 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
-            let loaded = loaded.join().expect("reading the app's files panicked");
+            let mut loaded = loaded.join().expect("reading the app's files panicked");
+            let keymap = std::mem::take(&mut loaded.keymap);
             let options = window_options(loaded.session.window, cx);
             let app = cx.new(|cx| AppState::new(loaded, cli_path, cx));
             cx.set_global(AppStateHandle(app.clone()));
             theme::apply(cx);
             actions::init(cx);
+            actions::load_keymap(&keymap, cx);
             menus::init(cx);
 
             gpui_kit::open_window(options, cx, |window, cx| {

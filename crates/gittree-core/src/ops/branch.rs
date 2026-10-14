@@ -205,6 +205,35 @@ pub fn stash_pop(runner: &GitRunner, index: u32) -> Result<(), GitError> {
     stash(runner, "pop", index)
 }
 
+/// Makes a branch named `name` at the commit the stash was made on, checks
+/// it out and applies the stash there. Git drops the stash only once it
+/// applied cleanly (FR-STASH-02).
+pub fn stash_branch(runner: &GitRunner, name: &str, index: u32) -> Result<(), GitError> {
+    check_name(runner, name)?;
+    let stash = format!("stash@{{{index}}}");
+    runner.write(["stash", "branch", name, &stash]).map(drop)
+}
+
+/// Sets the branch `upstream` tracks, such as `origin/main`, or stops it
+/// tracking one when `upstream` is `None` (FR-BRANCH-05).
+pub fn set_upstream(
+    runner: &GitRunner,
+    branch: &str,
+    upstream: Option<&str>,
+) -> Result<(), GitError> {
+    check_name(runner, branch)?;
+    match upstream {
+        Some(upstream) => {
+            check_rev(upstream)?;
+            let flag = format!("--set-upstream-to={upstream}");
+            runner.write(["branch", "-q", &flag, branch]).map(drop)
+        }
+        None => runner
+            .write(["branch", "--unset-upstream", branch])
+            .map(drop),
+    }
+}
+
 pub fn stash_drop(runner: &GitRunner, index: u32) -> Result<(), GitError> {
     stash(runner, "drop", index)
 }

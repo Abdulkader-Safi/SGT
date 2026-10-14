@@ -111,6 +111,7 @@ impl Sidebar {
                 let (kind, current, target) = (r.kind, r.is_current, r.target.clone());
                 let behind = r.behind;
                 let short = r.short_name().to_owned();
+                let upstream = r.upstream.clone();
                 move |menu, _, cx| {
                     let trusted = repo.read(cx).repository.trusted;
                     let head_name = match &repo.read(cx).repository.head {
@@ -204,6 +205,21 @@ impl Sidebar {
                                 })
                             })
                             .separator()
+                            .item({
+                                let (repo, name, upstream) =
+                                    (repo.clone(), short.clone(), upstream.clone());
+                                item("remote", "menu_item.set_upstream")
+                                    .disabled(!trusted)
+                                    .on_click(move |_, window, cx| {
+                                        dialogs::set_upstream(
+                                            repo.clone(),
+                                            name.clone(),
+                                            upstream.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                            })
                             .item(
                                 item("file", "menu_item.rename")
                                     .disabled(!trusted)
@@ -322,6 +338,15 @@ impl Sidebar {
                         .disabled(!trusted)
                         .on_click(run(Op::StashPop(index))),
                 )
+                .item({
+                    let repo = repo.clone();
+                    PopupMenuItem::new(t!("stash.branch_item").into_owned())
+                        .icon(icon("branch"))
+                        .disabled(!trusted)
+                        .on_click(move |_, window, cx| {
+                            dialogs::stash_branch(repo.clone(), index, window, cx)
+                        })
+                })
                 .separator()
                 .item(
                     PopupMenuItem::new(t!("menu_item.drop_stash").into_owned())

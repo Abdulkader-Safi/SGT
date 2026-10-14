@@ -20,7 +20,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9: history tools | Built: interactive rebase, conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12. 161 tests pass. Waits on checks by eye |
-| M10: comfort | Started: background fetch and ignoring files are built |
+| M10: comfort | Started: background fetch, ignoring files, setting an upstream and a branch from a stash are built |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
@@ -583,6 +583,13 @@ Still needs a check by eye: the dialog with many commits, and a reword with a lo
 - The line is added to the `.gitignore` at the top of the working tree, which is made if there is none. A file's own pattern starts with `/` and escapes the characters Git reads as wildcards, so it matches that file only.
 - It goes through `run_op`, so it needs a trusted repository. It has no undo entry: the change to `.gitignore` shows in the changes and can be discarded there.
 - Not built: a free pattern typed by hand, and ignoring a tracked file (Git keeps tracking it until it is removed from the index).
+
+### Set upstream, and a branch from a stash (built)
+
+- A local branch's right-click menu has "Set upstream…": one field, filled with the current upstream or `origin/<branch>`. Saving an empty field stops the branch tracking anything.
+- A stash's right-click menu has "Create branch from stash…". The new branch starts where the stash was made, is checked out, and gets the stash applied. Git removes the stash only when it applied cleanly.
+- Neither has an undo entry: the upstream is one line of config, and the stash's changes are in the working tree of the new branch.
+- The welcome tagline and the rename dialog said "Mac". They now say "computer".
 
 ## M12: blame, file history, worktrees and agent sessions
 

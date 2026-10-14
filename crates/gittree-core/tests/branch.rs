@@ -276,3 +276,42 @@ fn bad_names_and_untrusted_repositories_are_refused() {
     );
     assert_eq!(head(&repo), "main");
 }
+
+#[test]
+fn a_stash_becomes_a_branch_and_an_upstream_can_be_set_and_unset() {
+    let repo = repo();
+    let runner = repo.runner(true);
+    repo.write("a.txt", b"stashed\n");
+    branch::stash_push(&runner, "wip", false).unwrap();
+    repo.write("a.txt", b"two\n");
+    // main moves on, so the branch must start where the stash was made.
+    repo.write("b.txt", b"b\n");
+    repo.commit_all("third");
+
+    branch::stash_branch(&runner, "from-stash", 0).unwrap();
+    assert_eq!(
+        repo.git(1, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "from-stash"
+    );
+    assert_eq!(repo.read("a.txt"), b"stashed\n");
+    assert_eq!(
+        repo.git(1, &["rev-parse", "HEAD"]),
+        repo.git(1, &["rev-parse", "main~1"])
+    );
+    assert!(branch::list_stashes(&runner).unwrap().is_empty());
+    assert!(branch::stash_branch(&runner, "-x", 0).is_err());
+
+    branch::set_upstream(&runner, "from-stash", Some("main")).unwrap();
+    assert_eq!(
+        repo.git(1, &["rev-parse", "--abbrev-ref", "from-stash@{upstream}"]),
+        "main"
+    );
+    branch::set_upstream(&runner, "from-stash", None).unwrap();
+    assert!(
+        repo.runner(true)
+            .read(["rev-parse", "--abbrev-ref", "from-stash@{upstream}"])
+            .is_err()
+    );
+    assert!(branch::set_upstream(&runner, "from-stash", Some("--x")).is_err());
+    assert!(branch::set_upstream(&repo.runner(false), "from-stash", Some("main")).is_err());
+}

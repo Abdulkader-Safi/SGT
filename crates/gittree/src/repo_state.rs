@@ -107,6 +107,16 @@ pub enum Op {
         old: String,
         new: String,
     },
+    /// `None` stops the branch tracking anything.
+    SetUpstream {
+        branch: String,
+        upstream: Option<String>,
+    },
+    /// A new branch where the stash was made, with the stash applied.
+    StashBranch {
+        name: String,
+        index: u32,
+    },
     DeleteBranch {
         name: String,
         force: bool,
@@ -2060,6 +2070,11 @@ fn op_label(op: &Op) -> String {
         }
         Op::Stage(_)
         | Op::Ignore(_)
+        // Neither loses work: the upstream is one line of config, and Git
+        // drops the stash only once it is applied on the new branch.
+        // ponytail: so no undo entry. Add one if people miss it.
+        | Op::SetUpstream { .. }
+        | Op::StashBranch { .. }
         | Op::Unstage(_)
         // Each of its commits gets a label of its own.
         | Op::CommitPlan { .. }
@@ -2139,6 +2154,12 @@ fn execute(
     match op {
         Op::Stage(paths) => stage::stage(runner, &paths).map(|()| Done::Changed),
         Op::Ignore(pattern) => stage::add_ignore(runner, &pattern).map(|()| Done::Changed),
+        Op::SetUpstream { branch, upstream } => {
+            branch::set_upstream(runner, &branch, upstream.as_deref()).map(|()| Done::Changed)
+        }
+        Op::StashBranch { name, index } => {
+            branch::stash_branch(runner, &name, index).map(|()| Done::Changed)
+        }
         Op::Unstage(paths) => stage::unstage(runner, &paths, has_commits).map(|()| Done::Changed),
         Op::Apply {
             diff,

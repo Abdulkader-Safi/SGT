@@ -1531,6 +1531,47 @@ fn an_untracked_file_can_be_ignored(cx: &mut TestAppContext) {
     });
 }
 
+/// FR-STASH-02: a stash becomes a branch from its dialog.
+#[gpui_kit::test]
+fn a_stash_becomes_a_branch(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    std::fs::write(dir.path().join("a.txt"), "stashed\n").unwrap();
+    git(dir.path(), &["stash", "-q"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    shell.in_window(cx, |window, cx| {
+        gittree::views::dialogs::stash_branch(repo.clone(), 0, window, cx)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |window, cx| window.input("from-stash", cx));
+    shell.in_window(cx, |window, cx| window.press("enter", cx));
+    for _ in 0..200 {
+        cx.run_until_parked();
+        if cx.update(|cx| !repo.read(cx).busy) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let head = Command::new("git")
+        .current_dir(dir.path())
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(head.stdout).unwrap(), "from-stash\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "stashed\n"
+    );
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

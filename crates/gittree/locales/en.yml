@@ -29,7 +29,7 @@ git_check:
   retry: "Retry"
 
 welcome:
-  tagline: "A native Git client. Everything is done by the Git on your Mac."
+  tagline: "A native Git client. Everything is done by the Git on your computer."
   open: "Open repository"
   open_hint: "Pick a folder that has a .git inside"
   clone: "Clone repository"
@@ -406,7 +406,7 @@ branch:
   start_at: "Start at"
   checkout_new: "Check out the new branch"
   rename_title: "Rename branch"
-  rename_text: "Renames %{name} on this Mac. A branch on a remote keeps its name until you push."
+  rename_text: "Renames %{name} on this computer. A branch on a remote keeps its name until you push."
   new_name: "New name"
   rename: "Rename"
   delete_title: "Delete %{name}?"
@@ -439,6 +439,9 @@ stash:
   drop: "Drop stash"
   apply: "Apply"
   pop: "Pop"
+  branch_item: "Create branch from stash…"
+  branch_title: "Create branch from stash"
+  branch_text: "Starts a new branch at the commit the stash was made on, checks it out and applies the stash there. The stash is removed once it applies cleanly."
 
 checkout:
   blocked_title: "Your changes are in the way"
@@ -462,6 +465,7 @@ menu_item:
   copy_hash: "Copy hash"
   compare: "Compare with %{branch}…"
   edit_after: "Edit commits after this…"
+  set_upstream: "Set upstream…"
   drop_stash: "Drop…"
 
 merge:
@@ -581,6 +585,12 @@ snapshots:
   undone: "undone"
   close: "Close"
   menu: "Snapshots…"
+
+upstream:
+  title: "Upstream of %{branch}"
+  text: "The remote branch Pull and Push use, and the ahead and behind counts compare with. Leave it empty to stop tracking."
+  field: "Upstream branch"
+  action: "Save"
 
 rebase_plan:
   title: "Edit the commits after %{base}"

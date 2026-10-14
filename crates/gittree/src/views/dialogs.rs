@@ -265,6 +265,82 @@ pub fn rename_branch(repo: Entity<RepoState>, old: String, window: &mut Window, 
     );
 }
 
+/// Sets or clears the branch a local branch tracks (FR-BRANCH-05).
+pub fn set_upstream(
+    repo: Entity<RepoState>,
+    branch: String,
+    current: Option<String>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let shown = current
+        .as_deref()
+        .map(|full| {
+            full.strip_prefix("refs/remotes/")
+                .unwrap_or(full)
+                .to_owned()
+        })
+        .unwrap_or_else(|| format!("origin/{branch}"));
+    let upstream = text_input(&shown, "origin/main".into(), window, cx);
+    let body = upstream.clone();
+    form(
+        t!("upstream.title", branch = &branch).into_owned(),
+        Some(t!("upstream.text").into_owned()),
+        t!("upstream.action").into_owned(),
+        Some(upstream.clone()),
+        move |_, cx| {
+            field(
+                t!("upstream.field").into_owned(),
+                Input::new(&body).id("upstream").small(),
+                None,
+                palette(cx),
+            )
+        },
+        move |_, cx| {
+            let value = upstream.read(cx).value().trim().to_owned();
+            let op = Op::SetUpstream {
+                branch: branch.clone(),
+                upstream: (!value.is_empty()).then_some(value),
+            };
+            repo.update(cx, |repo, cx| repo.run_op(op, cx));
+            true
+        },
+        window,
+        cx,
+    );
+}
+
+/// Names the branch a stash becomes (FR-STASH-02).
+pub fn stash_branch(repo: Entity<RepoState>, index: u32, window: &mut Window, cx: &mut App) {
+    let name = text_input("", t!("branch.name_hint").into_owned(), window, cx);
+    let body = name.clone();
+    form(
+        t!("stash.branch_title").into_owned(),
+        Some(t!("stash.branch_text").into_owned()),
+        t!("branch.create").into_owned(),
+        Some(name.clone()),
+        move |_, cx| {
+            field(
+                t!("branch.name").into_owned(),
+                Input::new(&body).id("stash-branch-name").small(),
+                None,
+                palette(cx),
+            )
+        },
+        move |_, cx| {
+            let name = name.read(cx).value().trim().to_owned();
+            if name.is_empty() {
+                return false;
+            }
+            let op = Op::StashBranch { name, index };
+            repo.update(cx, |repo, cx| repo.run_op(op, cx));
+            true
+        },
+        window,
+        cx,
+    );
+}
+
 /// Asks before a branch goes. When it has commits of its own they are
 /// named, and a tick is needed before the button works (FR-BRANCH-02).
 pub fn delete_branch(

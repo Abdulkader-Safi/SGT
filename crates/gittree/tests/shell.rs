@@ -1416,6 +1416,65 @@ fn the_compare_dialog_lists_files_that_differ(cx: &mut TestAppContext) {
     assert!(shell.in_window(cx, |window, _| window.try_find("compare-to").is_some()));
 }
 
+/// FR-REWRITE-01: the interactive rebase dialog reorders and drops
+/// commits, and nothing changes until Rebase is pressed.
+#[gpui_kit::test]
+fn the_rebase_plan_reorders_and_drops_commits(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    git(dir.path(), &["config", "user.name", "Ada"]);
+    git(dir.path(), &["config", "user.email", "ada@example.com"]);
+    for name in ["base", "a", "b", "c"] {
+        std::fs::write(dir.path().join(format!("{name}.txt")), name).unwrap();
+        git(dir.path(), &["add", "-A"]);
+        git(dir.path(), &["commit", "-q", "-m", name]);
+    }
+    let log = || {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(["log", "--format=%s", "--reverse"])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    let base = {
+        let out = Command::new("git")
+            .current_dir(dir.path())
+            .args(["rev-parse", "HEAD~3"])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    };
+    shell.in_window(cx, |window, cx| {
+        gittree::views::dialogs::interactive_rebase(repo.clone(), base, window, cx)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |_, _| ());
+    // a moves below b, then c is set to Drop: five steps past Pick.
+    shell.in_window(cx, |window, cx| window.click(("plan-down", 0usize), cx));
+    for _ in 0..5 {
+        shell.in_window(cx, |window, cx| window.click(("plan-step", 2usize), cx));
+    }
+    assert_eq!(log(), "base\na\nb\nc\n", "nothing changes before Rebase");
+    shell.in_window(cx, |window, cx| window.click("ok", cx));
+    for _ in 0..200 {
+        cx.run_until_parked();
+        if cx.update(|cx| !repo.read(cx).busy) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert_eq!(log(), "base\nb\na\n");
+    let undo = cx.update(|cx| repo.read(cx).undo_info.undo.clone());
+    assert!(undo.is_some_and(|label| label.starts_with("Edit commits after")));
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

@@ -127,6 +127,11 @@ pub enum Op {
         no_ff: bool,
     },
     Rebase(String),
+    /// Replays the commits after `base` by the user's plan.
+    InteractiveRebase {
+        base: String,
+        items: Vec<merge::TodoItem>,
+    },
     CherryPick {
         oid: String,
         mainline: Option<u32>,
@@ -2001,6 +2006,9 @@ fn op_label(op: &Op) -> String {
         Op::StashDrop(_) => t!("journal.stash_drop").into_owned(),
         Op::Merge { branch, .. } => t!("journal.merge", branch = branch).into_owned(),
         Op::Rebase(onto) => t!("journal.rebase", onto = onto).into_owned(),
+        Op::InteractiveRebase { base, .. } => {
+            t!("journal.interactive_rebase", base = &base[..7.min(base.len())]).into_owned()
+        }
         Op::CherryPick { oid, .. } => {
             t!("journal.cherry_pick", oid = &oid[..7.min(oid.len())]).into_owned()
         }
@@ -2257,6 +2265,13 @@ fn execute(
                 no_ff,
             };
             stoppable(action, &|| merge::merge(runner, git_dir, &branch, no_ff))
+        }
+        // Journaled as a rebase onto `base`: undo puts the snapshot back,
+        // and redo resets to the result, so the plan is not needed again.
+        Op::InteractiveRebase { base, items } => {
+            stoppable(Action::Rebase { onto: base.clone() }, &|| {
+                merge::rebase_interactive(runner, git_dir, &base, &items)
+            })
         }
         Op::Rebase(onto) => stoppable(Action::Rebase { onto: onto.clone() }, &|| {
             merge::rebase(runner, git_dir, &onto)

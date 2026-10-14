@@ -19,7 +19,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
-| M9: history tools | Built except interactive rebase: conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12 |
+| M9: history tools | Built: interactive rebase, conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12. 161 tests pass. Waits on checks by eye |
 | M10: comfort | Not started |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
@@ -555,6 +555,18 @@ Still needs a check by eye: the marks in both themes.
 - While it is on, lines and hunks cannot be staged, unstaged or discarded from the diff, because a patch built from it would not fit the file. Whole files still can.
 
 Still needs a check by eye: the checkbox in a narrow diff header.
+
+### Interactive rebase (built)
+
+- "Edit commits after this…" in a commit's right-click menu lists the commits after it up to HEAD, oldest first, in the order Git will apply them.
+- Each has a step button that cycles Pick, Reword, Edit, Squash, Fixup and Drop, and Up and Down to move it. Reword opens a message field, filled with the old summary. A dropped commit is struck through.
+- Nothing changes until Rebase. Then the app writes the todo list to `.git/gittree/rebase-todo` and runs `git rebase -i` with `sequence.editor` set to copy that file. A reword is a pick followed by `exec git commit --amend -F <file>`, with the message in a file of its own, so no editor opens and no text the user typed reaches a shell. Paths are single-quoted for `sh`.
+- The core checks the plan names exactly the commits after the base, each once, before Git runs, and refuses a plan whose first kept commit is a squash or fixup. A range with a merge commit is refused, and so is a commit outside the current branch's history.
+- An Edit step, or a conflict, stops the rebase. The usual banner offers Continue, Skip and Abort.
+- It is journaled as a rebase, so a snapshot is saved first and Undo puts the branch back.
+- Not built: a menu per row, drag to reorder, and replaying merges.
+
+Still needs a check by eye: the dialog with many commits, and a reword with a long message.
 
 ## M12: blame, file history, worktrees and agent sessions
 

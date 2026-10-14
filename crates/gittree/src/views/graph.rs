@@ -448,6 +448,14 @@ fn commit_menu(
             })
     })
     .item({
+        let (repo, base) = (repo.clone(), oid.to_string());
+        item("commit", "menu_item.edit_after")
+            .disabled(!trusted || is_head)
+            .on_click(move |_, window, cx| {
+                dialogs::interactive_rebase(repo.clone(), base.clone(), window, cx)
+            })
+    })
+    .item({
         let (repo, target, branch) = (repo.clone(), oid.to_string(), head_name.clone());
         PopupMenuItem::new(t!("menu_item.reset_here", branch = head_name).into_owned())
             .icon(crate::icons::icon("fetch"))

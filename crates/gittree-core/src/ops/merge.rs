@@ -134,6 +134,163 @@ pub fn rebase(runner: &GitRunner, git_dir: &Path, onto: &str) -> Result<(), GitE
     or_conflict(runner, git_dir, runner.write(["rebase", onto]))
 }
 
+/// What happens to one commit in an interactive rebase (FR-REWRITE-01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Pick,
+    /// Pick, then replace the message with the one given.
+    Reword,
+    /// Pick, then stop so the user can change the commit.
+    Edit,
+    /// Join into the commit before, keeping both messages.
+    Squash,
+    /// Join into the commit before, keeping only its message.
+    Fixup,
+    Drop,
+}
+
+/// One line of the plan: a commit, what to do with it, and the new
+/// message for a reword.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoItem {
+    pub oid: String,
+    pub step: Step,
+    pub message: String,
+}
+
+/// The commits after `base` up to HEAD, oldest first, as id and summary.
+/// A range with a merge commit is refused: replaying merges is not built.
+pub fn rebase_commits(runner: &GitRunner, base: &str) -> Result<Vec<(String, String)>, GitError> {
+    check_rev(base)?;
+    // Otherwise the rebase would move the branch onto `base`, not edit
+    // the branch's own commits.
+    if runner
+        .read(["merge-base", "--is-ancestor", base, "HEAD"])
+        .is_err()
+    {
+        return Err(refused(
+            "This commit is not in the current branch's history.",
+        ));
+    }
+    let range = format!("{base}..HEAD");
+    let merges = runner.read(["rev-list", "--merges", "-n1", &range])?;
+    if !merges.is_empty() {
+        return Err(refused(
+            "These commits include a merge, which this rebase cannot replay.",
+        ));
+    }
+    let out = runner.read(["log", "--reverse", "--format=%H%x1f%s", "-z", &range])?;
+    Ok(out
+        .split(|&byte| byte == 0)
+        .filter_map(|entry| {
+            let entry = String::from_utf8_lossy(entry);
+            let (oid, summary) = entry.split_once('\x1f')?;
+            Some((oid.trim().to_owned(), summary.to_owned()))
+        })
+        .collect())
+}
+
+fn refused(text: &str) -> GitError {
+    GitError {
+        kind: GitErrorKind::Other,
+        args: Vec::new(),
+        exit_code: None,
+        stderr: text.into(),
+    }
+}
+
+/// A path as one word for `sh`, which Git uses to run the sequence editor
+/// and `exec` lines, also on Windows.
+fn sh_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
+/// The todo list Git will follow. A reword is a pick followed by an
+/// `exec` that amends the message from a file, so no editor is needed.
+fn todo_text(items: &[TodoItem], message_file: &dyn Fn(usize) -> std::path::PathBuf) -> String {
+    let mut todo = String::new();
+    for (ix, item) in items.iter().enumerate() {
+        let word = match item.step {
+            Step::Pick | Step::Reword => "pick",
+            Step::Edit => "edit",
+            Step::Squash => "squash",
+            Step::Fixup => "fixup",
+            Step::Drop => "drop",
+        };
+        todo.push_str(&format!("{word} {}\n", item.oid));
+        if item.step == Step::Reword {
+            let file = sh_quote(&message_file(ix));
+            todo.push_str(&format!(
+                "exec git commit --amend -q --allow-empty -F {file}\n"
+            ));
+        }
+    }
+    todo
+}
+
+/// Rebases the commits after `base` by the plan in `items`, which must
+/// name exactly those commits. Git's own todo editor is replaced by a copy
+/// of a todo file written here. An edit step, or a conflict, leaves the
+/// rebase stopped, reported as `Conflict` so it is continued like one.
+pub fn rebase_interactive(
+    runner: &GitRunner,
+    git_dir: &Path,
+    base: &str,
+    items: &[TodoItem],
+) -> Result<(), GitError> {
+    // Only the commits that are there, each once: nothing else reaches
+    // the todo list.
+    let mut listed: Vec<String> = rebase_commits(runner, base)?
+        .into_iter()
+        .map(|c| c.0)
+        .collect();
+    let mut planned: Vec<String> = items.iter().map(|item| item.oid.clone()).collect();
+    listed.sort();
+    planned.sort();
+    if listed != planned || listed.is_empty() {
+        return Err(refused(
+            "The plan does not match the commits after this one any more.",
+        ));
+    }
+    if items
+        .iter()
+        .find(|item| item.step != Step::Drop)
+        .is_some_and(|first| matches!(first.step, Step::Squash | Step::Fixup))
+    {
+        return Err(refused(
+            "The first commit kept cannot be squashed: there is nothing before it.",
+        ));
+    }
+    let folder = git_dir.join("gittree");
+    let message_file = |ix: usize| folder.join(format!("reword-{ix}"));
+    let write = |path: &Path, text: &str| {
+        std::fs::create_dir_all(&folder)
+            .and_then(|()| std::fs::write(path, text))
+            .map_err(|error| refused(&format!("Could not write the rebase plan: {error}")))
+    };
+    for (ix, item) in items.iter().enumerate() {
+        if item.step == Step::Reword {
+            if item.message.trim().is_empty() {
+                return Err(refused("A reworded commit needs a message."));
+            }
+            write(&message_file(ix), &item.message)?;
+        }
+    }
+    let todo = folder.join("rebase-todo");
+    write(&todo, &todo_text(items, &message_file))?;
+    let editor = format!("sequence.editor=cp {}", sh_quote(&todo));
+    let result = runner.write(["-c", &editor, "rebase", "-i", "--no-autosquash", base]);
+    or_conflict(runner, git_dir, result)?;
+    // An edit step stops the rebase with a clean exit.
+    if in_progress(runner, git_dir).is_some() {
+        return Err(GitError {
+            kind: GitErrorKind::Conflict,
+            ..refused("Stopped to edit a commit.")
+        });
+    }
+    Ok(())
+}
+
 /// Skips the commit a rebase stopped on.
 pub fn rebase_skip(runner: &GitRunner, git_dir: &Path) -> Result<(), GitError> {
     or_conflict(runner, git_dir, runner.write(["rebase", "--skip"]))

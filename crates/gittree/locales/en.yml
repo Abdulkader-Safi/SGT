@@ -370,6 +370,7 @@ journal:
   force_push: "Force-push %{branch}"
   merge: "Merge %{branch}"
   rebase: "Rebase onto %{onto}"
+  interactive_rebase: "Edit commits after %{base}"
   cherry_pick: "Cherry-pick %{oid}"
   revert: "Revert %{oid}"
   reset: "Reset to %{target}"
@@ -451,6 +452,7 @@ menu_item:
   delete_tag: "Delete tag…"
   copy_hash: "Copy hash"
   compare: "Compare with %{branch}…"
+  edit_after: "Edit commits after this…"
   drop_stash: "Drop…"
 
 merge:
@@ -570,6 +572,17 @@ snapshots:
   undone: "undone"
   close: "Close"
   menu: "Snapshots…"
+
+rebase_plan:
+  title: "Edit the commits after %{base}"
+  text: "Oldest first, in the order Git will apply them. Press a commit's step to change it. Nothing changes until you press Rebase, and a snapshot is saved first, so Undo puts the branch back."
+  loading: "Reading the commits…"
+  pick: "Pick"
+  reword: "Reword"
+  edit: "Edit"
+  squash: "Squash"
+  fixup: "Fixup"
+  drop: "Drop"
 
 compare:
   title: "Compare"

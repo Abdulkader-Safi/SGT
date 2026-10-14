@@ -1548,6 +1548,180 @@ pub fn compare(
     );
 }
 
+/// One commit in the interactive rebase dialog.
+struct PlanRow {
+    oid: String,
+    summary: String,
+    step: gittree_core::ops::merge::Step,
+    /// The new message, used when the step is Reword.
+    message: Entity<InputState>,
+}
+
+/// Interactive rebase of the commits after `base` (FR-REWRITE-01). The
+/// list is the plan: nothing changes until Rebase is pressed.
+// ponytail: the step is one button that cycles through the six, and order
+// changes by Up and Down. A menu per row and drag to reorder would be
+// kinder with many commits.
+pub fn interactive_rebase(
+    repo: Entity<RepoState>,
+    base: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    use gittree_core::ops::merge::{self, Step, TodoItem};
+    type Plan = Entity<Option<Result<Vec<PlanRow>, String>>>;
+    let plan: Plan = cx.new(|_| None);
+    let runner = repo.read(cx).runner.clone();
+    let task = cx.background_spawn({
+        let base = base.clone();
+        async move { merge::rebase_commits(&runner, &base).map_err(|e| e.stderr) }
+    });
+    let handle = plan.clone();
+    window
+        .spawn(cx, async move |cx| {
+            let read = task.await;
+            let _ = cx.update(|window, cx| {
+                let rows = read.map(|commits| {
+                    commits
+                        .into_iter()
+                        .map(|(oid, summary)| PlanRow {
+                            message: text_input(&summary, String::new(), window, cx),
+                            oid,
+                            summary,
+                            step: Step::Pick,
+                        })
+                        .collect()
+                });
+                handle.update(cx, |plan, _| *plan = Some(rows));
+                window.refresh();
+            });
+        })
+        .detach();
+    let name = |step: Step| match step {
+        Step::Pick => t!("rebase_plan.pick"),
+        Step::Reword => t!("rebase_plan.reword"),
+        Step::Edit => t!("rebase_plan.edit"),
+        Step::Squash => t!("rebase_plan.squash"),
+        Step::Fixup => t!("rebase_plan.fixup"),
+        Step::Drop => t!("rebase_plan.drop"),
+    };
+    let shown = plan.clone();
+    let short: String = base.chars().take(7).collect();
+    form(
+        t!("rebase_plan.title", base = &short).into_owned(),
+        Some(t!("rebase_plan.text").into_owned()),
+        t!("merge.rebase").into_owned(),
+        None,
+        move |_, cx| {
+            let p = palette(cx);
+            let font = super::graph::mono(cx);
+            let note = |text: String, color| div().py_2().text_color(color).child(text);
+            let rows = match shown.read(cx) {
+                None => {
+                    return note(t!("rebase_plan.loading").into_owned(), p.text_tertiary)
+                        .into_any_element();
+                }
+                Some(Err(problem)) => return note(problem.clone(), p.danger).into_any_element(),
+                Some(Ok(rows)) => rows,
+            };
+            let count = rows.len();
+            let list = rows.iter().enumerate().map(|(ix, row)| {
+                let change =
+                    |id: &'static str, label: String, act: fn(&mut Vec<PlanRow>, usize)| {
+                        let plan = shown.clone();
+                        Button::new((id, ix)).xsmall().label(label).on_click(
+                            move |_, window, cx| {
+                                plan.update(cx, |plan, _| {
+                                    if let Some(Ok(rows)) = plan {
+                                        act(rows, ix)
+                                    }
+                                });
+                                window.refresh();
+                            },
+                        )
+                    };
+                let gone = row.step == Step::Drop;
+                v_flex()
+                    .gap(px(4.))
+                    .py(px(6.))
+                    .border_b_1()
+                    .border_color(p.border)
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .child(
+                                change("plan-step", name(row.step).into_owned(), |rows, ix| {
+                                    rows[ix].step = match rows[ix].step {
+                                        Step::Pick => Step::Reword,
+                                        Step::Reword => Step::Edit,
+                                        Step::Edit => Step::Squash,
+                                        Step::Squash => Step::Fixup,
+                                        Step::Fixup => Step::Drop,
+                                        Step::Drop => Step::Pick,
+                                    }
+                                })
+                                .w(px(76.)),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .font_family(font.clone())
+                                    .text_size(px(12.))
+                                    .text_color(p.text_tertiary)
+                                    .child(row.oid.chars().take(7).collect::<String>()),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_color(if gone { p.text_tertiary } else { p.text })
+                                    .when(gone, |text| text.line_through())
+                                    .child(row.summary.clone()),
+                            )
+                            .child(
+                                change("plan-up", "↑".into(), |rows, ix| rows.swap(ix, ix - 1))
+                                    .disabled(ix == 0),
+                            )
+                            .child(
+                                change("plan-down", "↓".into(), |rows, ix| rows.swap(ix, ix + 1))
+                                    .disabled(ix + 1 == count),
+                            ),
+                    )
+                    .when(row.step == Step::Reword, |row_box| {
+                        row_box.child(div().pl(px(84.)).child(Input::new(&row.message).small()))
+                    })
+            });
+            v_flex()
+                .id("rebase-plan")
+                .max_h(px(380.))
+                .overflow_y_scroll()
+                .children(list)
+                .into_any_element()
+        },
+        move |_, cx| {
+            let Some(Ok(rows)) = plan.read(cx) else {
+                return false;
+            };
+            let items: Vec<TodoItem> = rows
+                .iter()
+                .map(|row| TodoItem {
+                    oid: row.oid.clone(),
+                    step: row.step,
+                    message: row.message.read(cx).value().to_string(),
+                })
+                .collect();
+            let op = Op::InteractiveRebase {
+                base: base.clone(),
+                items,
+            };
+            repo.update(cx, |repo, cx| repo.run_op(op, cx));
+            true
+        },
+        window,
+        cx,
+    );
+}
+
 use gittree_core::agent::{self, AgentKind};
 use gpui_kit::component::input::{Textarea, TextareaState};
 

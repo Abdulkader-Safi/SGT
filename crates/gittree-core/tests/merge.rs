@@ -5,7 +5,7 @@ mod common;
 use common::TestRepo;
 use gittree_core::GitErrorKind;
 use gittree_core::journal::{Action, Journal};
-use gittree_core::ops::merge::{self, OpKind, ResetMode, Side};
+use gittree_core::ops::merge::{self, OpKind, ResetMode, Side, Step, TodoItem};
 use gittree_core::parse::conflict::{Choice, parse_conflicts, resolve};
 
 /// main and side both change line 2 of f.txt, so they conflict. side also
@@ -256,4 +256,89 @@ fn an_untrusted_repository_refuses_all_of_it() {
     assert_eq!(repo.read("f.txt"), b"one\nMAIN\nthree\n");
     // Reading the state is always allowed.
     assert!(merge::in_progress(&runner, &dir).is_none());
+}
+
+/// Four commits on top of base: a, b, c, d.
+fn four_commits() -> TestRepo {
+    let repo = TestRepo::new();
+    repo.git(1, &["config", "user.name", "Ada"]);
+    repo.git(1, &["config", "user.email", "ada@example.com"]);
+    repo.write("base.txt", b"base\n");
+    repo.commit_all("base");
+    for name in ["a", "b", "c", "d"] {
+        repo.write(&format!("{name}.txt"), name.as_bytes());
+        repo.commit_all(name);
+    }
+    repo
+}
+
+fn summaries(repo: &TestRepo) -> String {
+    repo.git(1, &["log", "--format=%s", "--reverse"])
+}
+
+#[test]
+fn an_interactive_rebase_follows_the_plan() {
+    let repo = four_commits();
+    let (runner, dir) = (repo.runner(true), git_dir(&repo));
+    let commits = merge::rebase_commits(&runner, "HEAD~4").unwrap();
+    let names: Vec<&str> = commits.iter().map(|c| c.1.as_str()).collect();
+    assert_eq!(names, ["a", "b", "c", "d"]);
+    let item = |ix: usize, step: Step, message: &str| TodoItem {
+        oid: commits[ix].0.clone(),
+        step,
+        message: message.into(),
+    };
+
+    // d moves first, b is reworded with a quote in it, c joins b, a goes.
+    let plan = [
+        item(3, Step::Pick, ""),
+        item(1, Step::Reword, "Bee's new name\n\nWith a body."),
+        item(2, Step::Fixup, ""),
+        item(0, Step::Drop, ""),
+    ];
+    merge::rebase_interactive(&runner, &dir, "HEAD~4", &plan).unwrap();
+    assert_eq!(summaries(&repo), "base\nd\nBee's new name");
+    assert_eq!(repo.git(1, &["log", "-1", "--format=%b"]), "With a body.");
+    assert!(repo.path().join("c.txt").exists() && !repo.path().join("a.txt").exists());
+    assert!(merge::in_progress(&runner, &dir).is_none());
+}
+
+#[test]
+fn an_edit_step_stops_and_a_stale_plan_is_refused() {
+    let repo = four_commits();
+    let (runner, dir) = (repo.runner(true), git_dir(&repo));
+    let commits = merge::rebase_commits(&runner, "HEAD~2").unwrap();
+    let item = |ix: usize, step: Step| TodoItem {
+        oid: commits[ix].0.clone(),
+        step,
+        message: String::new(),
+    };
+
+    // A plan that leaves a commit out, or starts with a squash, is refused
+    // before Git runs.
+    let missing = merge::rebase_interactive(&runner, &dir, "HEAD~2", &[item(0, Step::Pick)]);
+    assert!(missing.unwrap_err().stderr.contains("does not match"));
+    let squash = [item(0, Step::Squash), item(1, Step::Pick)];
+    assert!(merge::rebase_interactive(&runner, &dir, "HEAD~2", &squash).is_err());
+    assert!(merge::rebase_interactive(&repo.runner(false), &dir, "HEAD~2", &[]).is_err());
+    assert_eq!(summaries(&repo), "base\na\nb\nc\nd");
+    // A commit outside the branch's history is refused.
+    repo.git(1, &["switch", "-q", "-c", "other", "HEAD~1"]);
+    repo.write("o.txt", b"o");
+    repo.commit_all("other");
+    repo.git(1, &["switch", "-q", "main"]);
+    assert!(merge::rebase_commits(&runner, "other").is_err());
+
+    let stopped = merge::rebase_interactive(
+        &runner,
+        &dir,
+        "HEAD~2",
+        &[item(0, Step::Edit), item(1, Step::Pick)],
+    );
+    assert_eq!(stopped.unwrap_err().kind, GitErrorKind::Conflict);
+    let op = merge::in_progress(&runner, &dir).unwrap();
+    assert_eq!(op.kind, OpKind::Rebase);
+    merge::continue_op(&runner, &dir, OpKind::Rebase).unwrap();
+    assert!(merge::in_progress(&runner, &dir).is_none());
+    assert_eq!(summaries(&repo), "base\na\nb\nc\nd");
 }

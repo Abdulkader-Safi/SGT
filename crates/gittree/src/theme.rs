@@ -16,7 +16,7 @@ pub fn apply(cx: &mut App) {
         ThemeChoice::Light => ThemeMode::Light,
         ThemeChoice::Dark | ThemeChoice::HighContrast => ThemeMode::Dark,
     };
-    let font_size = px(settings.ui_font_size);
+    let font_size = px(settings.ui_font_size * crate::zoom::clamp(settings.zoom));
     let mut p = match settings.theme {
         ThemeChoice::HighContrast => Palette::high_contrast(),
         _ => Palette::new(mode.is_dark()),

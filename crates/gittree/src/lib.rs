@@ -10,6 +10,7 @@ pub mod platform;
 pub mod repo_state;
 pub mod theme;
 pub mod views;
+pub mod zoom;
 
 use gittree_core::GitErrorKind;
 use gittree_core::store::WindowState;

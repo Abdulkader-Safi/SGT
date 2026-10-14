@@ -1920,6 +1920,46 @@ fn the_pull_request_is_written_from_commits(cx: &mut TestAppContext) {
     assert_eq!(title.value(), Some("Vim keys in the graph"));
 }
 
+/// FR-SET-04: Zoom in, Zoom out and Actual size scale the whole window,
+/// kept between 50% and 300%.
+#[gpui_kit::test]
+fn the_interface_zooms(cx: &mut TestAppContext) {
+    use gittree::actions::{ResetZoom, ZoomIn, ZoomOut};
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    git(
+        dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "first"],
+    );
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    let rem =
+        |cx: &mut TestAppContext| shell.in_window(cx, |window, _| f32::from(window.rem_size()));
+    assert_eq!(rem(cx), 16.);
+    for _ in 0..3 {
+        shell.in_window(cx, |window, cx| {
+            window.dispatch_action(Box::new(ZoomIn), cx)
+        });
+    }
+    shell.in_window(cx, |_, _| ());
+    assert!((rem(cx) - 16. * 1.3).abs() < 0.01);
+    for _ in 0..30 {
+        shell.in_window(cx, |window, cx| {
+            window.dispatch_action(Box::new(ZoomOut), cx)
+        });
+    }
+    shell.in_window(cx, |_, _| ());
+    assert_eq!(rem(cx), 8.);
+    shell.in_window(cx, |window, cx| {
+        window.dispatch_action(Box::new(ResetZoom), cx)
+    });
+    shell.in_window(cx, |_, _| ());
+    assert_eq!(rem(cx), 16.);
+    cx.update(|cx| assert_eq!(shell.app.read(cx).settings.zoom, 1.));
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

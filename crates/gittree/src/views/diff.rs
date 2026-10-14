@@ -13,9 +13,11 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, FontWeight, HighlightStyle, InteractiveElement,
     IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, StyledText, Task, UniformListScrollHandle, Window, div, px,
+    StatefulInteractiveElement, Styled, StyledText, Task, UniformListScrollHandle, Window, div,
     uniform_list,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::dialogs::confirm_destructive;

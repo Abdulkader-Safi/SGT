@@ -8,8 +8,10 @@ use gpui_kit::component::{ActiveTheme, Sizable, WindowExt, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AppContext, Context, Entity, ExternalPaths, InteractiveElement, IntoElement, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Window, WindowBounds, div, px,
+    Render, StatefulInteractiveElement, Styled, Window, WindowBounds, div,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::git_check::GitCheckView;
@@ -203,7 +205,7 @@ fn show_details(error: GitError, window: &mut Window, cx: &mut gpui_kit::App) {
                 .child(div().text_sm().font_family(mono.clone()).child(text))
         };
         alert
-            .width(px(560.))
+            .width(crate::zoom::scaled(560., cx))
             .title(t!("error_details.title").into_owned())
             .description(error_message(error.kind))
             .child(
@@ -235,7 +237,9 @@ fn offer_init(app: Entity<AppState>, path: PathBuf, window: &mut Window, cx: &mu
 }
 
 impl Render for RootView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The zoom: every size the views give through `zoom::px` follows.
+        window.set_rem_size(gpui_kit::px(crate::zoom::BASE * crate::zoom::level(cx)));
         let app = self.app.read(cx);
         let content = match (&app.git, &self.workspace) {
             (GitCheck::Checking, _) => div().into_any_element(),

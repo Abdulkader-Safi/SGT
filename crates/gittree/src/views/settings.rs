@@ -9,8 +9,10 @@ use gpui_kit::component::{Sizable, h_flex};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Context, Global, IntoElement,
     ParentElement, Render, SharedString, Styled, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, div, px, size,
+    WindowOptions, div, size,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use crate::app_state::app_state;
@@ -32,7 +34,7 @@ pub fn open(cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(720.), px(560.)),
+            size(gpui_kit::px(720.), gpui_kit::px(560.)),
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
@@ -81,12 +83,16 @@ fn choice<T: Copy + PartialEq + 'static>(
 }
 
 fn number(get: fn(&Stored) -> f32, set: fn(&mut Stored, f32)) -> SettingField<f64> {
+    number_in((9., 24., 1.), get, set)
+}
+
+fn number_in(
+    (min, max, step): (f64, f64, f64),
+    get: fn(&Stored) -> f32,
+    set: fn(&mut Stored, f32),
+) -> SettingField<f64> {
     SettingField::number_input(
-        NumberFieldOptions {
-            min: 9.,
-            max: 24.,
-            step: 1.,
-        },
+        NumberFieldOptions { min, max, step },
         move |cx| read(cx, get) as f64,
         move |value, cx| write(cx, |settings| set(settings, value as f32)),
     )
@@ -105,7 +111,8 @@ fn text(get: fn(&Stored) -> String, set: fn(&mut Stored, String)) -> SettingFiel
 pub struct SettingsView;
 
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_rem_size(gpui_kit::px(crate::zoom::BASE * crate::zoom::level(cx)));
         let label = |key: &str| -> SharedString { t!(key).into_owned().into() };
         let appearance = SettingGroup::new()
             .title(label("settings.appearance"))
@@ -133,6 +140,17 @@ impl Render for SettingsView {
                 label("settings.ui_font_size"),
                 number(|s| s.ui_font_size, |s, v| s.ui_font_size = v),
             ))
+            .item(
+                SettingItem::new(
+                    label("settings.zoom"),
+                    number_in(
+                        (50., 300., 10.),
+                        |s| (s.zoom * 100.).round(),
+                        |s, v| s.zoom = crate::zoom::clamp(v / 100.),
+                    ),
+                )
+                .description(label("settings.zoom_help")),
+            )
             .item(SettingItem::new(
                 label("settings.diff_font_family"),
                 text(

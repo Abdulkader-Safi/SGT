@@ -38,6 +38,9 @@ actions!(
         NewBranch,
         Minimize,
         Zoom,
+        ZoomIn,
+        ZoomOut,
+        ResetZoom,
     ]
 );
 
@@ -70,6 +73,9 @@ pub fn commands() -> Vec<(
         ("menu.focus_changes", "file", "⌘2", Box::new(FocusChanges)),
         ("menu.search", "search", "⌘F", Box::new(SearchCommits)),
         ("menu.toggle_diff", "split", "⇧⌘D", Box::new(ToggleDiffView)),
+        ("menu.zoom_in", "plus", "⌘=", Box::new(ZoomIn)),
+        ("menu.zoom_out", "minus", "⌘-", Box::new(ZoomOut)),
+        ("menu.reset_zoom", "search", "⌘0", Box::new(ResetZoom)),
         ("snapshots.menu", "clock", "", Box::new(ShowSnapshots)),
         ("reflog.menu", "clock", "", Box::new(ShowReflog)),
         ("activity.menu", "info", "", Box::new(ShowActivity)),
@@ -100,6 +106,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-b", NewBranch, None),
         KeyBinding::new("secondary-m", Minimize, None),
         KeyBinding::new("secondary-enter", Commit, None),
+        KeyBinding::new("secondary-=", ZoomIn, None),
+        KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary--", ZoomOut, None),
+        KeyBinding::new("secondary-0", ResetZoom, None),
         // Only while the changed files or their diff have the focus, so a
         // space typed into the commit message stays a space.
         KeyBinding::new("space", StageSelection, Some("Changes")),
@@ -125,6 +135,15 @@ pub fn init(cx: &mut App) {
             )
         })
     });
+    // FR-SET-04: the whole interface, 50% to 300%.
+    let zoom = |cx: &mut App, change: fn(f32) -> f32| {
+        app_state(cx).update(cx, |app, cx| {
+            app.update_settings(|s| s.zoom = crate::zoom::clamp(change(s.zoom)), cx)
+        })
+    };
+    cx.on_action(move |_: &ZoomIn, cx| zoom(cx, |z| z + crate::zoom::STEP));
+    cx.on_action(move |_: &ZoomOut, cx| zoom(cx, |z| z - crate::zoom::STEP));
+    cx.on_action(move |_: &ResetZoom, cx| zoom(cx, |_| 1.));
     cx.on_action(|_: &OpenRepository, cx| pick_folder(cx, Pick::Open));
     cx.on_action(|_: &InitRepository, cx| pick_folder(cx, Pick::Init));
     cx.on_action(|_: &CloseRepository, cx| app_state(cx).update(cx, |app, cx| app.close_repo(cx)));

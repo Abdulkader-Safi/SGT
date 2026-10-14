@@ -5,8 +5,10 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     AppContext, Context, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Window,
-    div, px,
+    div,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::graph::mono;

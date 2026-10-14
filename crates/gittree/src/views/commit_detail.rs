@@ -3,8 +3,10 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AppContext, ClipboardItem, Context, Entity, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::diff::DiffPane;

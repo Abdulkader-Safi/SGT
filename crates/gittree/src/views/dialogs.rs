@@ -58,8 +58,9 @@ use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, AppContext, Entity, Focusable, FontWeight, IntoElement, SharedString, Styled, div,
-    px,
 };
+
+use crate::zoom::px;
 
 use super::ui::ic;
 use crate::palette::{Palette, palette};
@@ -123,7 +124,9 @@ fn form(
             input.focus_handle(cx).focus(window, cx);
         }
         let (enter, click) = (on_ok.clone(), on_ok.clone());
-        let mut alert = alert.width(px(460.)).title(title.clone());
+        let mut alert = alert
+            .width(crate::zoom::scaled(460., cx))
+            .title(title.clone());
         if let Some(description) = &description {
             alert = alert.description(description.clone());
         }
@@ -418,7 +421,7 @@ pub fn delete_branch(
         let (repo, name) = (repo.clone(), name.clone());
         let branch = name.clone();
         alert
-            .width(px(460.))
+            .width(crate::zoom::scaled(460., cx))
             .title(t!("branch.delete_title", name = name).into_owned())
             .description(t!("branch.delete_unmerged", count = lost.len()).into_owned())
             .child(
@@ -877,7 +880,7 @@ pub fn reset(
             window.close_dialog(cx);
         });
         alert
-            .width(px(480.))
+            .width(crate::zoom::scaled(480., cx))
             .title(t!("reset.title", branch = branch, target = short).into_owned())
             .child(
                 v_flex()
@@ -1044,7 +1047,7 @@ pub fn credential(request: CredentialRequest, window: &mut Window, cx: &mut App)
         let (enter, click) = (answer.clone(), answer);
         let (cancel, closed) = (request.clone(), request.clone());
         alert
-            .width(px(460.))
+            .width(crate::zoom::scaled(460., cx))
             .title(t!("credential.title").into_owned())
             .description(request.question.clone())
             .child(
@@ -1277,7 +1280,7 @@ pub fn clone_repository(app: Entity<AppState>, window: &mut Window, cx: &mut App
                 )
         });
         alert
-            .width(px(480.))
+            .width(crate::zoom::scaled(480., cx))
             .title(t!("clone.title").into_owned())
             .child(
                 v_flex()
@@ -1419,7 +1422,7 @@ pub fn snapshots(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
                 )
         });
         alert
-            .width(px(600.))
+            .width(crate::zoom::scaled(600., cx))
             .title(t!("snapshots.title").into_owned())
             .description(t!("snapshots.text").into_owned())
             .child(
@@ -1515,7 +1518,7 @@ pub fn activity(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
                 .child(t!("activity.empty").into_owned())
         });
         alert
-            .width(px(720.))
+            .width(crate::zoom::scaled(720., cx))
             .title(t!("activity.title").into_owned())
             .description(t!("activity.text").into_owned())
             .child(
@@ -1623,7 +1626,7 @@ pub fn reflog(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
                 .into_any_element(),
         };
         alert
-            .width(px(600.))
+            .width(crate::zoom::scaled(600., cx))
             .title(t!("reflog.title").into_owned())
             .description(t!("reflog.text").into_owned())
             .child(

@@ -8,8 +8,10 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     App, Context, Entity, FocusHandle, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, Render, ScrollStrategy, SharedString, StatefulInteractiveElement, Styled,
-    TestSupportExt, UniformListScrollHandle, Window, div, px, uniform_list,
+    TestSupportExt, UniformListScrollHandle, Window, div, uniform_list,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::graph_element::{LANE_WIDTH, ROW_HEIGHT, graph_cell};
@@ -126,7 +128,7 @@ impl Render for GraphView {
 
         // At least three lanes wide, so the column title fits.
         let lanes = repo.history.lanes.max(3);
-        let lane_width = LANE_WIDTH * lanes as f32;
+        let lane_width = px(LANE_WIDTH * lanes as f32);
         let header = h_flex()
             .flex_none()
             .h(px(26.))
@@ -167,7 +169,7 @@ impl Render for GraphView {
                 .child(header)
                 .children((0..14).map(|n| {
                     h_flex()
-                        .h(ROW_HEIGHT)
+                        .h(px(ROW_HEIGHT))
                         .px_3()
                         .gap_3()
                         .opacity(1. - n as f32 * 0.06)
@@ -210,7 +212,7 @@ impl Render for GraphView {
                         };
                         h_flex()
                             .id(ix)
-                            .h(ROW_HEIGHT)
+                            .h(px(ROW_HEIGHT))
                             .w_full()
                             .pl_2()
                             .pr_3()
@@ -285,7 +287,7 @@ impl Render for GraphView {
             let selected = repo.selection.wip;
             h_flex()
                 .id("wip")
-                .h(ROW_HEIGHT)
+                .h(px(ROW_HEIGHT))
                 .flex_none()
                 .w_full()
                 .pl_2()

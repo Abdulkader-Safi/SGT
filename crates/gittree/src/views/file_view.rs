@@ -12,8 +12,10 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, FontWeight, InteractiveElement, IntoElement,
     ParentElement, Render, StatefulInteractiveElement, Styled, UniformListScrollHandle, Window,
-    div, px, uniform_list,
+    div, uniform_list,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::diff::DiffPane;

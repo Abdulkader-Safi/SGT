@@ -71,6 +71,10 @@ pub fn init(cx: &mut App) {
                 item("menu.focus_graph", Box::new(FocusGraph)),
                 item("menu.focus_changes", Box::new(FocusChanges)),
                 item("menu.toggle_diff", Box::new(ToggleDiffView)),
+                separator(),
+                item("menu.zoom_in", Box::new(ZoomIn)),
+                item("menu.zoom_out", Box::new(ZoomOut)),
+                item("menu.reset_zoom", Box::new(ResetZoom)),
             ],
         ),
         menu(

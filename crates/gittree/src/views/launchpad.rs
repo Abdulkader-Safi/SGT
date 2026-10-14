@@ -8,8 +8,10 @@ use gpui_kit::component::{Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Window, div, px,
+    Render, StatefulInteractiveElement, Styled, Window, div,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::dialogs;

@@ -10,8 +10,10 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AppContext, Context, Entity, FocusHandle, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
 };
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::agents::AgentsView;
@@ -737,8 +739,8 @@ impl Render for Workspace {
                         .child(
                             resizable_panel()
                                 .visible(self.show_sidebar)
-                                .size(px(sidebar_width))
-                                .size_range(px(160.)..px(480.))
+                                .size(gpui_kit::px(sidebar_width))
+                                .size_range(gpui_kit::px(160.)..gpui_kit::px(480.))
                                 // Holds its width: only the graph takes up
                                 // space the other panels leave.
                                 .flex_none()
@@ -748,8 +750,8 @@ impl Render for Workspace {
                         .child(
                             resizable_panel()
                                 .visible(self.show_detail)
-                                .size(px(detail_size))
-                                .size_range(px(240.)..px(900.))
+                                .size(gpui_kit::px(detail_size))
+                                .size_range(gpui_kit::px(240.)..gpui_kit::px(900.))
                                 // Holds its width: only the graph takes up
                                 // space the other panels leave.
                                 .flex_none()

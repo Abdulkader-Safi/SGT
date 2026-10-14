@@ -122,6 +122,8 @@ pub struct Settings {
     pub version: u32,
     pub theme: ThemeChoice,
     pub ui_font_size: f32,
+    /// The whole interface's zoom, 1.0 at 100% (FR-SET-04).
+    pub zoom: f32,
     pub diff_font_family: String,
     pub diff_font_size: f32,
     pub diff_view: DiffView,
@@ -165,6 +167,7 @@ impl Default for Settings {
             version: 1,
             theme: ThemeChoice::System,
             ui_font_size: 13.0,
+            zoom: 1.0,
             diff_font_family: "Menlo".into(),
             diff_font_size: 12.0,
             diff_view: DiffView::Inline,

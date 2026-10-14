@@ -4,10 +4,11 @@ use gpui_kit::{
     size,
 };
 
-pub const ROW_HEIGHT: Pixels = px(28.);
-pub const LANE_WIDTH: Pixels = px(16.);
-const LINE_WIDTH: Pixels = px(2.);
-const DOT_SIZE: Pixels = px(10.);
+/// Sizes at 100% zoom, in pixels. The painter scales them with the zoom.
+pub const ROW_HEIGHT: f32 = 28.;
+pub const LANE_WIDTH: f32 = 16.;
+const LINE_WIDTH: f32 = 2.;
+const DOT_SIZE: f32 = 10.;
 
 /// The graph column of one row: its lanes, edges and commit dot.
 pub fn graph_cell(
@@ -20,7 +21,7 @@ pub fn graph_cell(
         |_, _, _| (),
         move |bounds, _, window, _| paint_row(&row, bounds, colors, background, window),
     )
-    .w(LANE_WIDTH * lanes as f32)
+    .w(crate::zoom::px(LANE_WIDTH * lanes as f32))
     .h_full()
     .flex_none()
 }
@@ -32,7 +33,11 @@ fn paint_row(
     background: Hsla,
     window: &mut Window,
 ) {
-    let x = |lane: u16| bounds.left() + LANE_WIDTH * (lane as f32 + 0.5);
+    // The zoom, as the window's rem size against its size at 100%.
+    let k = window.rem_size() / px(crate::zoom::BASE);
+    let (lane_width, line_width, dot_size) =
+        (px(LANE_WIDTH * k), px(LINE_WIDTH * k), px(DOT_SIZE * k));
+    let x = |lane: u16| bounds.left() + lane_width * (lane as f32 + 0.5);
     let (top, mid, bottom) = (bounds.top(), bounds.center().y, bounds.bottom());
 
     for edge in &row.edges {
@@ -45,7 +50,7 @@ fn paint_row(
         };
         if from == to {
             // Most edges are vertical, and a quad is cheaper than a path.
-            let half = LINE_WIDTH / 2.;
+            let half = line_width / 2.;
             window.paint_quad(fill(
                 Bounds::from_corners(point(from - half, start.y), point(from + half, end.y)),
                 color,
@@ -59,7 +64,7 @@ fn paint_row(
             EdgeKind::FromChild => point(from, mid),
             EdgeKind::ToParent | EdgeKind::Through => point(to, start.y),
         };
-        let mut path = PathBuilder::stroke(LINE_WIDTH);
+        let mut path = PathBuilder::stroke(line_width);
         path.move_to(start);
         path.curve_to(end, control);
         if let Ok(path) = path.build() {
@@ -75,12 +80,12 @@ fn paint_row(
         .count()
         > 1;
     let color = colors[row.color as usize % 8];
-    let dot = Bounds::centered_at(point(x(row.lane), mid), size(DOT_SIZE, DOT_SIZE));
+    let dot = Bounds::centered_at(point(x(row.lane), mid), size(dot_size, dot_size));
     window.paint_quad(quad(
         dot,
-        DOT_SIZE / 2.,
+        dot_size / 2.,
         if merge { background } else { color },
-        px(2.),
+        line_width,
         color,
         Default::default(),
     ));

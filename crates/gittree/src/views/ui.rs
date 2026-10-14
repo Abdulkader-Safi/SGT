@@ -4,8 +4,10 @@
 use gittree_core::model::Change;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, Div, FontWeight, Hsla, IntoElement, ParentElement, SharedString, Styled, div, px,
+    AnyElement, Div, FontWeight, Hsla, IntoElement, ParentElement, SharedString, Styled, div,
 };
+
+use crate::zoom::px;
 
 use crate::icons::icon;
 use crate::palette::Palette;

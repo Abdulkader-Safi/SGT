@@ -20,7 +20,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9: history tools | Built: interactive rebase, conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12. 161 tests pass. Waits on checks by eye |
-| M10: comfort | Built except zoom, which is on hold (see below): background fetch, ignoring files, upstream, branch from a stash, the activity log, the identity, toasts, `change:` search, hiding branches, signing errors, the Insert menu, `keymap.json`, high-contrast and user themes, and repository tabs. 180 tests pass. Waits on checks by eye |
+| M10: comfort | Built: zoom, background fetch, ignoring files, upstream, branch from a stash, the activity log, the identity, toasts, `change:` search, hiding branches, signing errors, the Insert menu, `keymap.json`, high-contrast and user themes, and repository tabs. 184 tests pass. Waits on checks by eye |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
@@ -658,11 +658,12 @@ Still needs a check by eye: the dialog with many commits, and a reword with a lo
 - Errors and notices from any tab show as toasts.
 - Not built: reordering tabs by drag, and a keyboard shortcut to move between tabs.
 
-### Zoom (on hold)
+### Zoom (built)
 
-FR-SET-04 asks for zooming the whole interface from 50% to 300%. GPUI changes the window's scale factor only in tests, and `rem` sizes scale only what is sized in `rem`. The views size almost everything in `px` (about 370 places), so zooming would mean moving those to `rem` first. That is a large mechanical change across every view, so it waits for the owner's call. The UI font size setting still changes text size.
-
-## M12: blame, file history, worktrees and agent sessions
+- View, Zoom In, Zoom Out and Actual Size (Cmd or Ctrl with =, + , − and 0), and "Zoom (%)" in Settings, scale the whole interface from 50% to 300% in steps of 10%. It is saved with the settings.
+- How: the views size everything through `crate::zoom::px`, which gives a length in `rem`. Each window sets its rem size to 16 px times the zoom on every render, so all of those lengths follow. The graph's painter scales its lanes, lines and dots by the same factor, and the kit's font size is multiplied by it.
+- A few places take real pixels: dialog widths use `zoom::scaled`, which multiplies by the zoom. The side panel widths and the Settings window's size stay in plain pixels, so at a high zoom the panels may need dragging wider.
+- Not checked on screen: how each view looks at 50% and 300%. Text in kit components that size themselves in plain pixels will not grow.
 
 ### Blame and file history (built)
 

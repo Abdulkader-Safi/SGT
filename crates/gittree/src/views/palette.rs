@@ -6,7 +6,9 @@ use std::cell::Cell;
 use gittree_core::model::{Oid, RefKind};
 use gpui_kit::component::command::{Command, CommandGroup, CommandItem, CommandState};
 use gpui_kit::component::{WindowExt, h_flex};
-use gpui_kit::{App, AppContext, Entity, FocusHandle, ParentElement, Styled, Window, div, px};
+use gpui_kit::{App, AppContext, Entity, FocusHandle, ParentElement, Styled, Window, div};
+
+use crate::zoom::px;
 use rust_i18n::t;
 
 use super::ui::{ic, kbd};
@@ -59,40 +61,43 @@ pub fn open(repo: Entity<RepoState>, focus: FocusHandle, window: &mut Window, cx
                 .child(row(icon, name.clone(), String::new()))
         });
         let (repo, focus, refs) = (repo.clone(), focus.clone(), refs.clone());
-        dialog.w(px(620.)).close_button(false).child(
-            Command::new(&state)
-                .placeholder(t!("palette.placeholder").into_owned())
-                .bordered(false)
-                .group(
-                    CommandGroup::new()
-                        .label(t!("palette.commands").into_owned())
-                        .items(command_items),
-                )
-                .group(
-                    CommandGroup::new()
-                        .label(t!("palette.refs").into_owned())
-                        .items(ref_items),
-                )
-                .empty(move |_, _, _| {
-                    div()
-                        .p_6()
-                        .text_center()
-                        .text_color(p.text_secondary)
-                        .child(t!("palette.empty").into_owned())
-                })
-                .on_cancel(|window, cx| window.close_dialog(cx))
-                .on_confirm(move |path, window, cx| {
-                    window.close_dialog(cx);
-                    // A group is a section. Commands come first.
-                    if path.section == 0 {
-                        if let Some((_, _, _, action)) = commands().into_iter().nth(path.row) {
-                            focus.focus(window, cx);
-                            window.dispatch_action(action, cx);
+        dialog
+            .w(crate::zoom::scaled(620., cx))
+            .close_button(false)
+            .child(
+                Command::new(&state)
+                    .placeholder(t!("palette.placeholder").into_owned())
+                    .bordered(false)
+                    .group(
+                        CommandGroup::new()
+                            .label(t!("palette.commands").into_owned())
+                            .items(command_items),
+                    )
+                    .group(
+                        CommandGroup::new()
+                            .label(t!("palette.refs").into_owned())
+                            .items(ref_items),
+                    )
+                    .empty(move |_, _, _| {
+                        div()
+                            .p_6()
+                            .text_center()
+                            .text_color(p.text_secondary)
+                            .child(t!("palette.empty").into_owned())
+                    })
+                    .on_cancel(|window, cx| window.close_dialog(cx))
+                    .on_confirm(move |path, window, cx| {
+                        window.close_dialog(cx);
+                        // A group is a section. Commands come first.
+                        if path.section == 0 {
+                            if let Some((_, _, _, action)) = commands().into_iter().nth(path.row) {
+                                focus.focus(window, cx);
+                                window.dispatch_action(action, cx);
+                            }
+                        } else if let Some((_, _, oid)) = refs.get(path.row) {
+                            repo.update(cx, |repo, cx| repo.select_oid(oid, cx));
                         }
-                    } else if let Some((_, _, oid)) = refs.get(path.row) {
-                        repo.update(cx, |repo, cx| repo.select_oid(oid, cx));
-                    }
-                }),
-        )
+                    }),
+            )
     });
 }

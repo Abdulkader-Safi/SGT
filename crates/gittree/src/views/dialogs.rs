@@ -2073,6 +2073,65 @@ pub fn create_pull_request(repo: Entity<RepoState>, window: &mut Window, cx: &mu
     let title = text_input(&summary, String::new(), window, cx);
     let body = cx.new(|cx| TextareaState::new(window, cx).auto_grow(4, 10));
     let draft = cx.new(|_| false);
+    let writing = cx.new(|_| false);
+    // "Write from commits": the AI helper writes both from the branch's
+    // commit messages (FR-AGENT-05).
+    let write = {
+        let (repo, base, title, body, writing) = (
+            repo.clone(),
+            base.clone(),
+            title.clone(),
+            body.clone(),
+            writing.clone(),
+        );
+        move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+            let settings = &crate::app_state::app_state(cx).read(cx).settings;
+            let argv = match agent::ask_command(settings.ai_agent, &settings.ai_command) {
+                Ok(argv) => argv,
+                Err(problem) => {
+                    return window.push_notification(
+                        gpui_kit::component::notification::Notification::info(problem),
+                        cx,
+                    );
+                }
+            };
+            writing.update(cx, |writing, _| *writing = true);
+            let (runner, base) = (repo.read(cx).runner.clone(), base.clone());
+            let task = cx.background_spawn(async move {
+                let messages = gittree_core::ops::read::branch_messages(&runner, &base)
+                    .map_err(|error| error.stderr)?;
+                agent::ask(
+                    &argv,
+                    &agent::pull_request_prompt(&messages),
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+            });
+            let (title, body, writing) = (title.clone(), body.clone(), writing.clone());
+            window
+                .spawn(cx, async move |cx| {
+                    let answer = task.await;
+                    let _ = cx.update(|window, cx| {
+                        writing.update(cx, |writing, _| *writing = false);
+                        match answer {
+                            Ok(text) => {
+                                let (first, rest) = text.split_once('\n').unwrap_or((&text, ""));
+                                let (first, rest) =
+                                    (first.trim().to_owned(), rest.trim().to_owned());
+                                title.update(cx, |input, cx| input.set_value(first, window, cx));
+                                body.update(cx, |input, cx| input.set_value(rest, window, cx));
+                            }
+                            Err(problem) => window.push_notification(
+                                gpui_kit::component::notification::Notification::info(problem),
+                                cx,
+                            ),
+                        }
+                        window.refresh();
+                    });
+                })
+                .detach();
+        }
+    };
+    let write = Rc::new(write);
     let shown = (title.clone(), body.clone(), draft.clone());
     form(
         t!("launchpad.create").into_owned(),
@@ -2097,12 +2156,29 @@ pub fn create_pull_request(repo: Entity<RepoState>, window: &mut Window, cx: &mu
                     None,
                     p,
                 ))
-                .child(toggle(
-                    "pr-draft",
-                    t!("launchpad.pr_draft").into_owned(),
-                    draft,
-                    cx,
-                ))
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(toggle(
+                            "pr-draft",
+                            t!("launchpad.pr_draft").into_owned(),
+                            draft,
+                            cx,
+                        ))
+                        .child({
+                            let (write, busy) = (write.clone(), *writing.read(cx));
+                            Button::new("pr-write")
+                                .small()
+                                .loading(busy)
+                                .disabled(busy)
+                                .label(if busy {
+                                    t!("ai.writing").into_owned()
+                                } else {
+                                    t!("launchpad.pr_write").into_owned()
+                                })
+                                .on_click(move |event, window, cx| write(event, window, cx))
+                        }),
+                )
                 .child(
                     div()
                         .text_size(px(12.))

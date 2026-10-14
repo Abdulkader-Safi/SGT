@@ -745,6 +745,11 @@ Each may edit files in its worktree without asking, and nothing wider. None can 
 - The list is read when the Launchpad first opens and on Refresh. It does not update on its own.
 - Only GitHub, since `gh` is the only command it knows.
 
+### Write from commits (built)
+
+- "Write from commits" in the Create pull request dialog sends the messages of the commits the branch has and the base does not (on `origin` when it has the base, else locally) to the AI helper. The answer's first line becomes the title and the rest the description. Both stay editable.
+- An error, or no agent set, shows as a toast. Nothing is created until "Create pull request".
+
 ### Conflict suggestions (built)
 
 - "Suggest a result" in the conflict view sends the conflicted file, markers and all, to the AI helper and puts its answer in the result box. A line names the agent and says to read it first.

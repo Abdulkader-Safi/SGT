@@ -3,7 +3,8 @@ mod common;
 use common::TestRepo;
 use gittree_core::model::{Change, DiffKind, LineKind, Oid, RefKind};
 use gittree_core::ops::read::{
-    LARGE_DIFF_SHOWN, commit_details, commit_files, compare, diff_commit_file, list_refs, reflog,
+    LARGE_DIFF_SHOWN, branch_messages, commit_details, commit_files, compare, diff_commit_file,
+    list_refs, reflog,
 };
 
 fn write(repo: &TestRepo, name: &str, content: &[u8]) {
@@ -284,4 +285,18 @@ fn whitespace_only_changes_can_be_left_out() {
             .hunks
             .is_empty()
     );
+}
+
+#[test]
+fn a_branch_lists_the_messages_its_base_does_not_have() {
+    let repo = TestRepo::new();
+    write(&repo, "a.txt", b"a\n");
+    commit_all(&repo, 1, "on main");
+    repo.git(1, &["switch", "-q", "-c", "topic"]);
+    write(&repo, "a.txt", b"b\n");
+    commit_all(&repo, 2, "Add b\n\nBecause.");
+    write(&repo, "a.txt", b"c\n");
+    commit_all(&repo, 3, "Add c");
+    let out = String::from_utf8(branch_messages(&repo.runner(false), "main").unwrap()).unwrap();
+    assert!(out.contains("Add c") && out.contains("Because.") && !out.contains("on main"));
 }

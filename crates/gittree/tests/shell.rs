@@ -1851,6 +1851,75 @@ fn high_contrast_and_a_user_theme_set_the_palette(cx: &mut TestAppContext) {
     shell.in_window(cx, |_, _| ());
 }
 
+/// FR-AGENT-05: "Write from commits" fills the pull request's title and
+/// description from the branch's commit messages. A stand-in plays the
+/// agent.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn the_pull_request_is_written_from_commits(cx: &mut TestAppContext) {
+    use gittree_core::agent::AgentKind;
+    use std::os::unix::fs::PermissionsExt;
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    git(dir.path(), &["commit", "-q", "--allow-empty", "-m", "base"]);
+    git(dir.path(), &["switch", "-q", "-c", "topic"]);
+    git(
+        dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "Add vim keys"],
+    );
+    let asked = outside.path().join("asked.txt");
+    let script = outside.path().join("agent.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncat > '{}'\nprintf 'Vim keys in the graph\\n\\nj and k move.\\n'\n",
+            asked.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    cx.update(|cx| {
+        shell.app.update(cx, |app, cx| {
+            app.update_settings(
+                |settings| {
+                    settings.ai_agent = AgentKind::Other;
+                    settings.ai_command = script.to_str().unwrap().to_owned();
+                },
+                cx,
+            )
+        })
+    });
+    shell.in_window(cx, |window, cx| {
+        gittree::views::dialogs::create_pull_request(repo.clone(), window, cx)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    shell.in_window(cx, |_, _| ());
+    shell.in_window(cx, |window, cx| window.click("pr-write", cx));
+    for _ in 0..200 {
+        cx.run_until_parked();
+        if asked.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    for _ in 0..20 {
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let question = std::fs::read_to_string(&asked).unwrap();
+    assert!(question.contains("Add vim keys") && !question.contains("base"));
+    let title = shell.in_window(cx, |window, _| window.find("pr-title"));
+    assert_eq!(title.value(), Some("Vim keys in the graph"));
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

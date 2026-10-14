@@ -222,6 +222,7 @@ launchpad:
   pr_title: "Title"
   pr_body: "Description"
   pr_draft: "Open as a draft"
+  pr_write: "Write from commits"
   pr_note: "The branch is pushed first."
   created: "Pull request opened: %{url}"
 ai:

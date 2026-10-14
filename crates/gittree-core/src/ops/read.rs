@@ -143,6 +143,28 @@ pub fn uncommitted_patch(runner: &GitRunner, has_commits: bool) -> Result<Vec<u8
     ])
 }
 
+/// The messages of the commits HEAD has and `base` does not, for an agent
+/// writing a pull request. `base` is compared on `origin` when the remote
+/// has it, else locally.
+pub fn branch_messages(runner: &GitRunner, base: &str) -> Result<Vec<u8>, GitError> {
+    let remote = format!("refs/remotes/origin/{base}");
+    let from = if runner
+        .read(["rev-parse", "--verify", "-q", &remote])
+        .is_ok()
+    {
+        remote
+    } else {
+        format!("refs/heads/{base}")
+    };
+    runner.read([
+        "log",
+        "--no-merges",
+        "--format=%B",
+        &format!("{from}..HEAD"),
+        "--",
+    ])
+}
+
 /// A commit's message and patch, for an agent to read.
 pub fn commit_patch(runner: &GitRunner, oid: &Oid) -> Result<Vec<u8>, GitError> {
     runner.read([

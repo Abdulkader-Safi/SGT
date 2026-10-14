@@ -153,6 +153,9 @@ mod tests {
                 (p.text, p.diff_added),
                 (p.text, p.diff_removed),
                 (p.text, p.diff_picked),
+                // Changed words inside a changed line.
+                (p.text, p.diff_added_gutter),
+                (p.text, p.diff_removed_gutter),
             ]);
             for (index, (text, surface)) in pairs.into_iter().enumerate() {
                 let ratio = contrast(text, surface);

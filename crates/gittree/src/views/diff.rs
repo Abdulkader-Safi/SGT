@@ -79,6 +79,118 @@ fn rows(diff: &FileDiff, split: bool) -> Vec<Row> {
     rows
 }
 
+/// What changed inside each changed line, as a byte range of its drawn
+/// text (FR-DIFF-04). Removed lines pair with the added lines after them,
+/// as in the split view. `None` for a line with no partner, or when the
+/// whole line changed.
+// ponytail: one range per line, from the first to the last changed word.
+// Two separate edits in one line show as one span. A real word diff (an
+// LCS over words) would mark them apart.
+fn changed_words(diff: &FileDiff) -> Words {
+    let mut all: Words = diff
+        .hunks
+        .iter()
+        .map(|hunk| vec![None; hunk.lines.len()])
+        .collect();
+    for (h, hunk) in diff.hunks.iter().enumerate() {
+        let mut l = 0;
+        while l < hunk.lines.len() {
+            if hunk.lines[l].kind != LineKind::Remove {
+                l += 1;
+                continue;
+            }
+            let run = |from: usize, kind: LineKind| {
+                from..from
+                    + hunk.lines[from..]
+                        .iter()
+                        .take_while(|x| x.kind == kind)
+                        .count()
+            };
+            let removed = run(l, LineKind::Remove);
+            let added = run(removed.end, LineKind::Add);
+            for (old, new) in removed.clone().zip(added.clone()) {
+                let (a, b) = (display(&hunk.lines[old]), display(&hunk.lines[new]));
+                if let Some((in_old, in_new)) = word_change(&a, &b) {
+                    all[h][old] = Some(in_old);
+                    all[h][new] = Some(in_new);
+                }
+            }
+            l = added.end;
+        }
+    }
+    all
+}
+
+/// The changed part of two versions of a line, widened to whole words.
+fn word_change(a: &str, b: &str) -> Option<(Range<usize>, Range<usize>)> {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    // The bytes both share at the start, then at the end, on characters.
+    let mut start = a
+        .char_indices()
+        .zip(b.chars())
+        .find(|((_, x), y)| x != y)
+        .map_or(a.len().min(b.len()), |((i, _), _)| i);
+    while start > 0 && a[..start].chars().next_back().is_some_and(word) {
+        start -= a[..start].chars().next_back().map_or(1, char::len_utf8);
+    }
+    let room = a.len().min(b.len()) - start;
+    let mut end = a[start..]
+        .chars()
+        .rev()
+        .zip(b[start..].chars().rev())
+        .take_while(|(x, y)| x == y)
+        .map(|(x, _)| x.len_utf8())
+        .sum::<usize>()
+        .min(room);
+    // Cut back to the shared length, the end can split a character.
+    while !a.is_char_boundary(a.len() - end) || !b.is_char_boundary(b.len() - end) {
+        end -= 1;
+    }
+    while end > 0 && a[a.len() - end..].chars().next().is_some_and(word) {
+        end -= a[a.len() - end..].chars().next().map_or(1, char::len_utf8);
+    }
+    let (old, new) = (start..a.len() - end, start..b.len() - end);
+    // A line that changed all through gains nothing from a mark.
+    let whole = old.len() == a.trim_end().len() && new.len() == b.trim_end().len();
+    (!whole && !(old.is_empty() && new.is_empty())).then_some((old, new))
+}
+
+/// Syntax colours with `mark` laid over `range`: the spans are split at
+/// its edges, so they stay in order and never overlap.
+fn mark_range(spans: &Spans, range: Range<usize>, mark: HighlightStyle) -> Spans {
+    let mut out = Spans::new();
+    let mut at = range.start;
+    for (span, style) in spans {
+        let inside = span.start.max(range.start)..span.end.min(range.end);
+        if inside.start >= inside.end {
+            out.push((span.clone(), *style));
+            continue;
+        }
+        if at < inside.start {
+            out.push((at..inside.start, mark));
+        }
+        if span.start < inside.start {
+            out.push((span.start..inside.start, *style));
+        }
+        out.push((
+            inside.clone(),
+            HighlightStyle {
+                background_color: mark.background_color,
+                ..*style
+            },
+        ));
+        if inside.end < span.end {
+            out.push((inside.end..span.end, *style));
+        }
+        at = at.max(inside.end);
+    }
+    if at < range.end {
+        out.push((at..range.end, mark));
+    }
+    out.sort_by_key(|(span, _)| span.start);
+    out
+}
+
 /// A line as it is drawn: no line ending, and tabs as four spaces.
 fn display(line: &DiffLine) -> String {
     String::from_utf8_lossy(&line.text)
@@ -115,6 +227,8 @@ pub fn language_for(path: &str) -> Option<&'static str> {
 }
 
 type Spans = Vec<(Range<usize>, HighlightStyle)>;
+/// Per hunk and line, the changed part of the line's text.
+type Words = Vec<Vec<Option<Range<usize>>>>;
 
 /// Syntax colours for every line of a diff, as ranges into `display(line)`.
 ///
@@ -200,6 +314,8 @@ pub struct DiffPane {
     styled: Option<(Arc<FileDiff>, Arc<HighlightTheme>)>,
     styles: Option<Arc<Vec<Vec<Spans>>>>,
     style_task: Task<()>,
+    /// What changed inside each line, made with the rows.
+    words: Arc<Words>,
 }
 
 impl DiffPane {
@@ -215,6 +331,7 @@ impl DiffPane {
             anchor: None,
             styled: None,
             styles: None,
+            words: Arc::default(),
             style_task: Task::ready(()),
         }
     }
@@ -253,6 +370,7 @@ impl DiffPane {
                     self.anchor = None;
                 }
                 self.rows = Arc::new(rows(diff, split));
+                self.words = Arc::new(changed_words(diff));
                 self.seen = Some((diff.clone(), split));
             }
         }
@@ -537,6 +655,7 @@ impl Render for DiffPane {
                 let can_edit = origin != Origin::Commit && trusted && !cut;
                 let rows = self.rows.clone();
                 let styles = self.styles.clone();
+                let words = self.words.clone();
                 let list = uniform_list(
                     "diff",
                     rows.len(),
@@ -548,7 +667,7 @@ impl Render for DiffPane {
                         range
                             .filter_map(|ix| Some((ix, *rows.get(ix)?)))
                             .map(|(ix, row)| {
-                                let styles = styles.as_deref();
+                                let styles = (styles.as_deref(), &*words);
                                 let picked = |l: Option<usize>, h: usize| {
                                     l.is_some_and(|l| this.picked.contains(&(h, l)))
                                 };
@@ -789,7 +908,7 @@ fn hunk_row(
 #[allow(clippy::too_many_arguments)]
 fn line_cell(
     diff: &FileDiff,
-    styles: Option<&Vec<Vec<Spans>>>,
+    (styles, words): (Option<&Vec<Vec<Spans>>>, &Words),
     (row, h, l): (usize, usize, Option<usize>),
     numbers: [bool; 2],
     can_edit: bool,
@@ -851,6 +970,22 @@ fn line_cell(
         })
         .cloned()
         .unwrap_or_default();
+    // The changed words get the stronger colour of the line's gutter.
+    let changed = words.get(h).and_then(|words| words.get(l)?.clone());
+    let spans = match (changed, gutter) {
+        (Some(range), Some(strong))
+            if !picked
+                && text.is_char_boundary(range.start)
+                && text.is_char_boundary(range.end) =>
+        {
+            let mark = HighlightStyle {
+                background_color: Some(strong),
+                ..HighlightStyle::default()
+            };
+            mark_range(&spans, range, mark)
+        }
+        _ => spans,
+    };
     let selectable = can_edit && line.kind != LineKind::Context;
     cell.when_some(color, |cell, color| cell.bg(color))
         .when(picked, |cell| cell.bg(palette.diff_picked))
@@ -917,6 +1052,39 @@ mod tests {
             ]
         );
         assert_eq!(rows(&diff, false).len(), 8);
+    }
+
+    #[test]
+    fn changed_words_are_marked_inside_paired_lines() {
+        assert_eq!(
+            word_change("let total = price * count;", "let total = price * amount;"),
+            Some((20..25, 20..26))
+        );
+        // Widened to whole words, and safe on multi-byte characters.
+        assert_eq!(
+            word_change("naïve cafe", "naïve café"),
+            Some((7..11, 7..12))
+        );
+        assert_eq!(word_change("abc", "xyz"), None);
+        assert_eq!(word_change("same", "same"), None);
+        // One line repeats the other: no character is split, and a word
+        // that changed all through marks nothing.
+        assert_eq!(word_change("éé", "ééé"), None);
+
+        let diff = parse_file_diff(
+            b"--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n-a = 1\n-gone\n+a = 2\n context\n",
+        );
+        let words = changed_words(&diff);
+        assert_eq!(words[0], [Some(4..5), None, Some(4..5), None]);
+
+        let red = HighlightStyle::default();
+        let bold = HighlightStyle {
+            font_weight: Some(FontWeight::BOLD),
+            ..HighlightStyle::default()
+        };
+        let marked = mark_range(&vec![(0..3, bold), (6..9, bold)], 2..7, red);
+        let edges: Vec<Range<usize>> = marked.iter().map(|(range, _)| range.clone()).collect();
+        assert_eq!(edges, [0..2, 2..3, 3..6, 6..7, 7..9]);
     }
 
     #[test]

@@ -19,7 +19,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
-| M9: history tools | Started: conflict prediction, the reflog and compare are built. Blame and file history came with M12. Interactive rebase, and word diff with the whitespace toggle, are still to do |
+| M9: history tools | Started: conflict prediction, the reflog, compare and changed-word marks are built. Blame and file history came with M12. Interactive rebase and the whitespace toggle are still to do |
 | M10: comfort | Not started |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
@@ -538,6 +538,15 @@ Still needs a check by eye: the dialog with a long reflog.
 - A file's diff does not open from the list. The commit details show diffs one commit at a time.
 
 Still needs a check by eye: the dialog with many files.
+
+### Changed words (built)
+
+- In a changed line, the part that changed gets the stronger red or green of the line's gutter, in the inline and the split view. A removed line pairs with the added line after it, as the split view pairs them.
+- The marked part runs from the first to the last changed word. Two separate edits in one line show as one span: a real word diff is not built.
+- A line that changed all through, or has no partner, gets no mark. A picked line shows its picked colour instead.
+- The contrast test now also checks text on the two stronger colours.
+
+Still needs a check by eye: the marks in both themes.
 
 ## M12: blame, file history, worktrees and agent sessions
 

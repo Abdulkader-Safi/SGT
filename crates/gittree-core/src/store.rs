@@ -201,8 +201,10 @@ pub struct WindowState {
 pub struct Session {
     pub version: u32,
     pub window: Option<WindowState>,
-    /// Reopened at launch if it still exists.
+    /// Reopened at launch if it still exists, as the active tab.
     pub open_repo: Option<PathBuf>,
+    /// Every open tab, in order, the active one included (FR-REPO-05).
+    pub open_repos: Vec<PathBuf>,
     pub sidebar_width: f32,
     pub detail_size: f32,
     /// The unsent commit message of each repository.
@@ -215,6 +217,7 @@ impl Default for Session {
             version: 1,
             window: None,
             open_repo: None,
+            open_repos: Vec::new(),
             sidebar_width: 240.0,
             detail_size: 320.0,
             drafts: BTreeMap::new(),

@@ -20,7 +20,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9: history tools | Built: interactive rebase, conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12. 161 tests pass. Waits on checks by eye |
-| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity, completion toasts, `change:` search, hiding branches, the signing error, the Insert menu, `keymap.json`, and high-contrast and user themes are built. Still to do: repository tabs. Zoom is on hold, see below |
+| M10: comfort | Built except zoom, which is on hold (see below): background fetch, ignoring files, upstream, branch from a stash, the activity log, the identity, toasts, `change:` search, hiding branches, signing errors, the Insert menu, `keymap.json`, high-contrast and user themes, and repository tabs. 180 tests pass. Waits on checks by eye |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
@@ -648,6 +648,15 @@ Still needs a check by eye: the dialog with many commits, and a reword with a lo
 - "Custom colours" names a JSON file in the `themes` folder of the app's data folder, without `.json`. Its colours go over the chosen theme: an object from a palette token (`accent`, `text`, `bg_panel`, `lane1` to `lane8`, ...) to `#rrggbb` or `#rrggbbaa`. A token it does not know, or a colour it cannot read, is skipped.
 - Theme files are read with the other files at startup. A file that is not JSON is skipped and logged. A new file needs a restart. A user theme is not checked for contrast.
 - The palette is now a global that `theme::apply` sets, so every view reads the chosen one.
+
+### Repository tabs (built)
+
+- Opening a repository while another is open adds a tab. Opening one that is already open goes to its tab.
+- The tab bar shows when two or more are open: each tab has the repository's name and a close button. Close repository closes the active tab, and the one after it, or else before it, becomes active.
+- Each tab keeps its own workspace, so the selection, panels and scroll stay as they were when you come back. Every open repository keeps watching its files.
+- The session saves every tab and which is active. At launch they all come back; one that is gone is dropped quietly. A path on the command line opens as the active tab beside them.
+- Errors and notices from any tab show as toasts.
+- Not built: reordering tabs by drag, and a keyboard shortcut to move between tabs.
 
 ### Zoom (on hold)
 

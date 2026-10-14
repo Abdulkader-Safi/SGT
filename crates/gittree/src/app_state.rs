@@ -110,11 +110,14 @@ pub struct AppState {
     /// The user themes found at startup.
     pub themes: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
     pub git: GitCheck,
+    /// The active tab's repository. `repos` holds every tab.
     pub repo: Option<Entity<RepoState>>,
+    pub repos: Vec<Entity<RepoState>>,
     pub clone: Option<CloneJob>,
     /// Opened as soon as Git is ready: the command-line path, or the last
     /// session's repository.
-    pending_open: Option<(PathBuf, Quiet)>,
+    /// Each with whether it becomes the active tab.
+    pending_open: Vec<(PathBuf, Quiet, bool)>,
     session_changed: bool,
     saves: smol::channel::Sender<SaveJob>,
     _tasks: Vec<Task<()>>,
@@ -161,9 +164,23 @@ impl AppState {
             }
         });
 
-        let pending_open = cli_path
-            .map(|path| (path, Quiet::No))
-            .or_else(|| session.open_repo.clone().map(|path| (path, Quiet::Yes)));
+        // The last session's tabs come back, the active one marked. A path
+        // on the command line opens as the active tab.
+        let mut pending_open: Vec<(PathBuf, Quiet, bool)> = session
+            .open_repos
+            .iter()
+            .chain(
+                session
+                    .open_repo
+                    .iter()
+                    .filter(|p| !session.open_repos.contains(p)),
+            )
+            .map(|path| {
+                let active = cli_path.is_none() && session.open_repo.as_ref() == Some(path);
+                (path.clone(), Quiet::Yes, active)
+            })
+            .collect();
+        pending_open.extend(cli_path.map(|path| (path, Quiet::No, true)));
         let on_quit = cx.on_app_quit(|this, _| this.flush());
         let mut this = Self {
             settings,
@@ -173,6 +190,7 @@ impl AppState {
             themes,
             git: GitCheck::Checking,
             repo: None,
+            repos: Vec::new(),
             clone: None,
             pending_open,
             session_changed: false,
@@ -196,8 +214,8 @@ impl AppState {
                     Ok(version) => {
                         tracing::info!(git = %version.text, path = %version.path.display(), "found Git");
                         this.git = GitCheck::Ready(version);
-                        if let Some((path, quiet)) = this.pending_open.take() {
-                            this.open_with(path, quiet, cx);
+                        for (path, quiet, active) in std::mem::take(&mut this.pending_open) {
+                            this.open_with(path, quiet, active, cx);
                         }
                     }
                     Err(error) => {
@@ -219,11 +237,12 @@ impl AppState {
     }
 
     /// Opens the repository that contains `path`.
+    /// Opens a repository in a new tab, or goes to its tab if it is open.
     pub fn open(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.open_with(path, Quiet::No, cx);
+        self.open_with(path, Quiet::No, true, cx);
     }
 
-    fn open_with(&mut self, path: PathBuf, quiet: Quiet, cx: &mut Context<Self>) {
+    fn open_with(&mut self, path: PathBuf, quiet: Quiet, active: bool, cx: &mut Context<Self>) {
         let Some(git) = self.git_path() else {
             return;
         };
@@ -235,9 +254,12 @@ impl AppState {
         cx.spawn(async move |this, cx| {
             let opened = opened.await;
             let _ = this.update(cx, |this, cx| match opened {
-                Ok(repository) => this.show(repository, cx),
+                Ok(repository) => this.show(repository, active, cx),
                 Err(_) if quiet == Quiet::Yes => {
-                    this.session.open_repo = None;
+                    if this.session.open_repo.as_ref() == Some(&path) {
+                        this.session.open_repo = None;
+                    }
+                    this.session.open_repos.retain(|open| *open != path);
                     this.session_changed = true;
                 }
                 Err(error) if error.kind == GitErrorKind::NotARepository => {
@@ -265,7 +287,7 @@ impl AppState {
                 Ok((repository, trust)) => {
                     this.trust = trust;
                     this.save(&this.trust);
-                    this.show(repository, cx);
+                    this.show(repository, true, cx);
                 }
                 Err(error) => cx.emit(AppEvent::Error(error)),
             });
@@ -393,15 +415,24 @@ impl AppState {
         cx.notify();
     }
 
-    fn show(&mut self, repository: Repository, cx: &mut Context<Self>) {
+    fn show(&mut self, repository: Repository, active: bool, cx: &mut Context<Self>) {
         let Some(git) = self.git_path() else {
             return;
         };
         self.recent
             .touch(&repository.path, &repository.name(), now());
         self.save(&self.recent);
-        self.session.open_repo = Some(repository.path.clone());
-        self.save(&self.session);
+        // Already open: go to its tab.
+        if let Some(ix) = self
+            .repos
+            .iter()
+            .position(|open| open.read(cx).repository.path == repository.path)
+        {
+            if active {
+                self.activate(ix, cx);
+            }
+            return;
+        }
         let runner = GitRunner::new(git, &repository.path, repository.trusted);
         let repo = cx.new(|cx| RepoState::new(repository, runner, cx));
         // A view shows these. AppState only passes them on.
@@ -416,15 +447,56 @@ impl AppState {
             _ => {}
         })
         .detach();
-        self.repo = Some(repo);
+        self.repos.push(repo.clone());
+        if active || self.repo.is_none() {
+            self.repo = Some(repo);
+        }
+        self.save_tabs(cx);
         cx.notify();
     }
 
-    pub fn close_repo(&mut self, cx: &mut Context<Self>) {
-        self.repo = None;
-        self.session.open_repo = None;
-        self.save(&self.session);
+    /// Makes tab `ix` the active one.
+    pub fn activate(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(repo) = self.repos.get(ix) {
+            self.repo = Some(repo.clone());
+            self.save_tabs(cx);
+            cx.notify();
+        }
+    }
+
+    /// Closes tab `ix`. The one after it, or else before it, becomes
+    /// active when the closed tab was.
+    pub fn close_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix >= self.repos.len() {
+            return;
+        }
+        let closed = self.repos.remove(ix);
+        if self.repo.as_ref() == Some(&closed) {
+            self.repo = self
+                .repos
+                .get(ix.min(self.repos.len().saturating_sub(1)))
+                .cloned();
+        }
+        self.save_tabs(cx);
         cx.notify();
+    }
+
+    /// Closes the active tab.
+    pub fn close_repo(&mut self, cx: &mut Context<Self>) {
+        let active = self
+            .repo
+            .as_ref()
+            .and_then(|repo| self.repos.iter().position(|r| r == repo));
+        if let Some(ix) = active {
+            self.close_tab(ix, cx);
+        }
+    }
+
+    fn save_tabs(&mut self, cx: &App) {
+        let path = |repo: &Entity<RepoState>| repo.read(cx).repository.path.clone();
+        self.session.open_repos = self.repos.iter().map(path).collect();
+        self.session.open_repo = self.repo.as_ref().map(path);
+        self.save(&self.session);
     }
 
     /// Trusts the open repository, which lets it be changed and lets its

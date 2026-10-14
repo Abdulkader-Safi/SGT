@@ -140,6 +140,94 @@ fn opens_a_repository_untrusted_then_remembers_trust(cx: &mut TestAppContext) {
     });
 }
 
+/// FR-REPO-05: several repositories open as tabs, one active, and the
+/// tabs come back at the next launch.
+#[gpui_kit::test]
+fn repositories_open_as_tabs_and_come_back(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    isolate_git();
+    for dir in [&one, &two] {
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        git(
+            dir.path(),
+            &["commit", "-q", "--allow-empty", "-m", "first"],
+        );
+    }
+    let (one_path, two_path) = (
+        gittree_core::ops::setup::canonical(one.path()),
+        gittree_core::ops::setup::canonical(two.path()),
+    );
+    let active = |shell: &Shell, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let app = shell.app.read(cx);
+            let paths: Vec<_> = app
+                .repos
+                .iter()
+                .map(|r| r.read(cx).repository.path.clone())
+                .collect();
+            let active = app
+                .repo
+                .as_ref()
+                .map(|r| r.read(cx).repository.path.clone());
+            (paths, active)
+        })
+    };
+
+    let shell = launch(data.path(), Some(one.path().to_owned()), cx);
+    cx.update(|cx| {
+        shell
+            .app
+            .update(cx, |app, cx| app.open(two.path().to_owned(), cx))
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        active(&shell, cx),
+        (
+            vec![one_path.clone(), two_path.clone()],
+            Some(two_path.clone())
+        )
+    );
+    // Opening it again goes to its tab.
+    cx.update(|cx| {
+        shell
+            .app
+            .update(cx, |app, cx| app.open(one.path().to_owned(), cx))
+    });
+    cx.run_until_parked();
+    assert_eq!(active(&shell, cx).1, Some(one_path.clone()));
+    assert_eq!(active(&shell, cx).0.len(), 2);
+    // The tab bar shows, and its close button closes that tab.
+    shell.in_window(cx, |window, cx| window.click(("close-tab", 1usize), cx));
+    shell.in_window(cx, |_, _| ());
+    assert_eq!(
+        active(&shell, cx),
+        (vec![one_path.clone()], Some(one_path.clone()))
+    );
+    cx.update(|cx| {
+        shell
+            .app
+            .update(cx, |app, cx| app.open(two.path().to_owned(), cx))
+    });
+    cx.run_until_parked();
+    assert!(shell.in_window(cx, |window, _| {
+        window.try_find(("close-tab", 1usize)).is_some()
+    }));
+    cx.update(|cx| shell.app.update(cx, |app, cx| app.activate(0, cx)));
+    assert_eq!(active(&shell, cx).1, Some(one_path.clone()));
+    shell.quit(cx);
+
+    // Both come back, the same one active.
+    let shell = launch(data.path(), None, cx);
+    for _ in 0..50 {
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        active(&shell, cx),
+        (vec![one_path.clone(), two_path.clone()], Some(one_path))
+    );
+}
+
 #[gpui_kit::test]
 fn a_plain_folder_gets_an_offer_to_create_a_repository(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();

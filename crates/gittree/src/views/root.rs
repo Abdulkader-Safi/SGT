@@ -2,12 +2,13 @@ use std::path::PathBuf;
 
 use gittree_core::GitError;
 use gittree_core::store::WindowState;
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{ActiveTheme, WindowExt, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, WindowExt, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AppContext, Context, Entity, ExternalPaths, InteractiveElement, IntoElement, ParentElement,
-    Render, Styled, Window, WindowBounds, div, px,
+    Render, StatefulInteractiveElement, Styled, Window, WindowBounds, div, px,
 };
 use rust_i18n::t;
 
@@ -16,6 +17,7 @@ use super::welcome::WelcomeView;
 use super::workspace::Workspace;
 use crate::app_state::{AppEvent, AppState, GitCheck};
 use crate::error_message;
+use crate::repo_state::RepoState;
 
 /// The content of the main window. Shows the Git check, the welcome screen
 /// or the workspace, and turns app events into toasts and dialogs.
@@ -23,7 +25,10 @@ pub struct RootView {
     app: Entity<AppState>,
     git_check: Entity<GitCheckView>,
     welcome: Entity<WelcomeView>,
+    /// The active tab's workspace.
     workspace: Option<Entity<Workspace>>,
+    /// A workspace per open tab, so each keeps its own state.
+    workspaces: Vec<(Entity<RepoState>, Entity<Workspace>)>,
     cloning: bool,
 }
 
@@ -69,6 +74,7 @@ impl RootView {
             git_check: cx.new(|cx| GitCheckView::new(app.clone(), window, cx)),
             welcome: cx.new(|cx| WelcomeView::new(app.clone(), cx)),
             workspace: None,
+            workspaces: Vec::new(),
             cloning: false,
             app,
         };
@@ -76,18 +82,77 @@ impl RootView {
         this
     }
 
-    /// Keeps one workspace for the open repository, and none without one.
+    /// Keeps a workspace for each open tab and shows the active one.
     fn sync_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let open = self.app.read(cx).repo.clone();
-        let path = open
-            .as_ref()
-            .map(|repo| repo.read(cx).repository.path.clone());
-        let shown = self.workspace.as_ref().map(|w| w.read(cx).path.clone());
-        if path == shown {
-            return;
+        let (repos, active) = {
+            let app = self.app.read(cx);
+            (app.repos.clone(), app.repo.clone())
+        };
+        self.workspaces.retain(|(repo, _)| repos.contains(repo));
+        if let Some(repo) = &active
+            && !self.workspaces.iter().any(|(open, _)| open == repo)
+        {
+            let app = self.app.clone();
+            let workspace = cx.new(|cx| Workspace::new(app, repo.clone(), window, cx));
+            self.workspaces.push((repo.clone(), workspace));
         }
-        let app = self.app.clone();
-        self.workspace = open.map(|repo| cx.new(|cx| Workspace::new(app, repo, window, cx)));
+        self.workspace = active.and_then(|repo| {
+            let found = self.workspaces.iter().find(|(open, _)| *open == repo);
+            found.map(|(_, workspace)| workspace.clone())
+        });
+    }
+
+    /// A tab per open repository, shown when there are two or more.
+    fn tabs(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+        let app = self.app.read(cx);
+        if app.repos.len() < 2 {
+            return None;
+        }
+        let p = crate::palette::palette(cx);
+        let tabs = app.repos.iter().enumerate().map(|(ix, repo)| {
+            let on = app.repo.as_ref() == Some(repo);
+            let name = repo.read(cx).repository.name();
+            let (pick, close) = (self.app.clone(), self.app.clone());
+            h_flex()
+                .id(("tab", ix))
+                .h_full()
+                .px_3()
+                .gap_2()
+                .max_w(px(220.))
+                .border_r_1()
+                .border_color(p.border)
+                .text_size(px(12.))
+                .text_color(if on { p.text } else { p.text_secondary })
+                .when(on, |tab| {
+                    tab.bg(p.bg_app).font_weight(gpui_kit::FontWeight::MEDIUM)
+                })
+                .when(!on, |tab| {
+                    tab.cursor_pointer().hover(|style| style.bg(p.bg_hover))
+                })
+                .on_click(move |_, _, cx| pick.update(cx, |app, cx| app.activate(ix, cx)))
+                .child(div().truncate().child(name))
+                .child(
+                    Button::new(("close-tab", ix))
+                        .xsmall()
+                        .ghost()
+                        .label("×")
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            close.update(cx, |app, cx| app.close_tab(ix, cx))
+                        }),
+                )
+        });
+        Some(
+            h_flex()
+                .flex_none()
+                .h(px(32.))
+                // Room for the traffic lights, as the workspace toolbar has.
+                .when(crate::platform::MAC, |bar| bar.pl(px(80.)))
+                .bg(p.bg_panel)
+                .border_b_1()
+                .border_color(p.border)
+                .children(tabs),
+        )
     }
 }
 
@@ -195,9 +260,11 @@ impl Render for RootView {
                 .text_color(p.text_secondary)
                 .child(crate::APP_NAME)
         });
+        let tabs = self.tabs(cx);
         let content = v_flex()
             .size_full()
             .children(strip)
+            .children(tabs)
             .child(div().flex_1().overflow_hidden().child(content));
         let drop_target = cx.theme().drop_target;
         div()

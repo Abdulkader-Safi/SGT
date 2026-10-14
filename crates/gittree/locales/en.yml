@@ -322,6 +322,7 @@ staging:
   none_text: "Edit a file in this repository and it will show here."
 
 diff:
+  ignore_whitespace: "Ignore whitespace"
   show_split: "Split view"
   show_inline: "Inline view"
   stage_hunk: "Stage hunk"

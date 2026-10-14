@@ -446,6 +446,9 @@ pub struct RepoState {
     pub sessions: Vec<Session>,
     /// The calls agents made through the MCP server, oldest first, and
     /// the changes waiting for a yes or no (FR-AGENT-02).
+    /// Diffs leave out changes that are only whitespace. For this run of
+    /// the app only.
+    pub ignore_whitespace: bool,
     pub agent_calls: Vec<mcp::Call>,
     pub agent_requests: Vec<mcp::Request>,
     agent_task: Task<()>,
@@ -549,6 +552,7 @@ impl RepoState {
             ai_task: Task::ready(()),
             explain_task: Task::ready(()),
             sessions: Vec::new(),
+            ignore_whitespace: false,
             agent_calls: Vec::new(),
             agent_requests: Vec::new(),
             agent_task: Task::ready(()),
@@ -745,11 +749,11 @@ impl RepoState {
                         > read::LARGE_DIFF_LINES
             });
         cx.notify();
+        let ignore = self.ignore_whitespace;
         let runner = self.runner.clone();
-        let read =
-            cx.background_spawn(
-                async move { read::diff_worktree(&runner, &entry, staged, load_all) },
-            );
+        let read = cx.background_spawn(async move {
+            read::diff_worktree(&runner, &entry, staged, load_all, ignore)
+        });
         self.diff_task = cx.spawn(async move |this, cx| {
             let result = read.await;
             let _ = this.update(cx, |this, cx| {
@@ -1288,10 +1292,11 @@ impl RepoState {
         self.selection.file = Some(ix);
         self.selection.diff_loading = true;
         cx.notify();
+        let ignore = self.ignore_whitespace;
         let runner = self.runner.clone();
         let read = cx.background_spawn({
             let oid = oid.clone();
-            async move { read::diff_commit_file(&runner, &oid, &file, load_all) }
+            async move { read::diff_commit_file(&runner, &oid, &file, load_all, ignore) }
         });
         self.diff_task = cx.spawn(async move |this, cx| {
             let result = read.await;
@@ -1813,6 +1818,27 @@ impl RepoState {
         }
     }
 
+    /// Turns ignoring whitespace on or off, and reads the shown diff again.
+    pub fn toggle_whitespace(&mut self, cx: &mut Context<Self>) {
+        self.ignore_whitespace = !self.ignore_whitespace;
+        if let Some(view) = &self.file_view
+            && let Some(row) = view.history.as_ref().and_then(|list| {
+                list.iter()
+                    .position(|entry| Some(&entry.commit.oid) == view.picked.as_ref())
+            })
+        {
+            self.pick_file_commit(row, cx);
+        }
+        if self.selection.wip {
+            if let Some((path, staged)) = self.selection.wip_file.clone() {
+                self.select_wip_file(path, staged, false, cx);
+            }
+        } else if let Some(ix) = self.selection.file {
+            self.select_file(ix, false, cx);
+        }
+        cx.notify();
+    }
+
     /// Marks a history row and reads what that commit did to the file.
     pub fn pick_file_commit(&mut self, row: usize, cx: &mut Context<Self>) {
         let Some(view) = self.file_view.as_mut() else {
@@ -1831,10 +1857,11 @@ impl RepoState {
         view.diff = None;
         view.diff_loading = true;
         cx.notify();
+        let ignore = self.ignore_whitespace;
         let runner = self.runner.clone();
         let read = cx.background_spawn({
             let oid = oid.clone();
-            async move { read::diff_commit_file(&runner, &oid, &entry.file, false) }
+            async move { read::diff_commit_file(&runner, &oid, &entry.file, false, ignore) }
         });
         self.diff_task = cx.spawn(async move |this, cx| {
             let result = read.await;

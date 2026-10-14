@@ -221,11 +221,13 @@ pub const LARGE_DIFF_LINES: usize = 20_000;
 pub const LARGE_DIFF_SHOWN: usize = 2_000;
 
 /// The diff of one file in a commit, against the first parent.
+/// `ignore_whitespace` leaves out changes that are only spaces (`-w`).
 pub fn diff_commit_file(
     runner: &GitRunner,
     oid: &Oid,
     file: &FileChange,
     load_all: bool,
+    ignore_whitespace: bool,
 ) -> Result<FileDiff, GitError> {
     let mut args: Vec<&std::ffi::OsStr> = [
         "show",
@@ -240,6 +242,9 @@ pub fn diff_commit_file(
     .iter()
     .map(|arg| arg.as_ref())
     .collect();
+    if ignore_whitespace {
+        args.push("-w".as_ref());
+    }
     args.push(oid.as_ref().as_ref());
     args.push("--".as_ref());
     // Both names, or Git cannot see that the file was renamed.
@@ -303,12 +308,14 @@ pub fn status(runner: &GitRunner) -> Result<Vec<StatusEntry>, GitError> {
 
 /// The diff of one changed file: HEAD against the index when `staged`, else
 /// the index against the working tree. An untracked file is read from disk
-/// and shown as all added.
+/// and shown as all added. With `ignore_whitespace` the diff cannot be
+/// staged by line: its lines no longer match the file.
 pub fn diff_worktree(
     runner: &GitRunner,
     entry: &StatusEntry,
     staged: bool,
     load_all: bool,
+    ignore_whitespace: bool,
 ) -> Result<FileDiff, GitError> {
     if !staged && entry.worktree == Change::Untracked {
         return Ok(cut_large(untracked_diff(runner, &entry.path), load_all));
@@ -320,6 +327,9 @@ pub fn diff_worktree(
             .collect();
     if staged {
         args.push("--cached".as_ref());
+    }
+    if ignore_whitespace {
+        args.push("-w".as_ref());
     }
     args.push("--".as_ref());
     // A rename only shows in the index. Both names, or Git cannot see it.

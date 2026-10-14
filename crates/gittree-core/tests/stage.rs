@@ -21,7 +21,7 @@ fn entry(repo: &TestRepo, path: &str) -> StatusEntry {
 }
 
 fn diff(repo: &TestRepo, path: &str, staged: bool) -> FileDiff {
-    diff_worktree(&repo.runner(true), &entry(repo, path), staged, false).unwrap()
+    diff_worktree(&repo.runner(true), &entry(repo, path), staged, false, false).unwrap()
 }
 
 /// The changed lines whose kind and text (without the line ending) are in
@@ -481,7 +481,7 @@ fn an_untrusted_repository_refuses_every_change() {
         kind(stage::commit(&runner, "no", false).map(drop)),
         GitErrorKind::Untrusted
     );
-    let unstaged = diff_worktree(&runner, &entry(&repo, "a.txt"), false, false).unwrap();
+    let unstaged = diff_worktree(&runner, &entry(&repo, "a.txt"), false, false, false).unwrap();
     let all = patch::hunk_lines(&unstaged, 0);
     for target in [Target::Stage, Target::Discard] {
         let result = stage::apply_selection(&runner, &unstaged, &all, target);

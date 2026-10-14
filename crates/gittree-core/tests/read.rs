@@ -120,7 +120,7 @@ fn reads_commit_details_and_files() {
     assert!(root.len() == 3 && root.iter().all(|f| f.change == Change::Added));
 
     let modified = files.iter().find(|f| f.change == Change::Modified).unwrap();
-    let diff = diff_commit_file(&runner, &second, modified, false).unwrap();
+    let diff = diff_commit_file(&runner, &second, modified, false, false).unwrap();
     assert_eq!(diff.kind, DiffKind::Text);
     let lines: Vec<(LineKind, &[u8])> = diff.hunks[0]
         .lines
@@ -136,7 +136,7 @@ fn reads_commit_details_and_files() {
     );
 
     let renamed = files.iter().find(|f| f.change == Change::Renamed).unwrap();
-    let diff = diff_commit_file(&runner, &second, renamed, false).unwrap();
+    let diff = diff_commit_file(&runner, &second, renamed, false, false).unwrap();
     assert!(diff.hunks.is_empty(), "a pure rename has no hunks");
     assert_eq!(diff.old_path.unwrap().to_string(), "old name.txt");
 }
@@ -159,7 +159,7 @@ fn a_merge_is_compared_with_its_first_parent() {
     let files = commit_files(&runner, &merge).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path.to_string(), "side.txt");
-    let diff = diff_commit_file(&runner, &merge, &files[0], false).unwrap();
+    let diff = diff_commit_file(&runner, &merge, &files[0], false, false).unwrap();
     assert_eq!(diff.hunks[0].lines[0].text, b"side\n");
 }
 
@@ -178,7 +178,7 @@ fn binary_files_report_sizes_and_huge_diffs_are_cut() {
     let files = commit_files(&runner, &second).unwrap();
     let file = |name: &str| files.iter().find(|f| f.path.to_string() == name).unwrap();
 
-    let binary = diff_commit_file(&runner, &second, file("image.bin"), false).unwrap();
+    let binary = diff_commit_file(&runner, &second, file("image.bin"), false, false).unwrap();
     assert_eq!(
         binary.kind,
         DiffKind::Binary {
@@ -188,7 +188,7 @@ fn binary_files_report_sizes_and_huge_diffs_are_cut() {
     );
 
     let count = |load_all| {
-        let diff = diff_commit_file(&runner, &second, file("big.txt"), load_all).unwrap();
+        let diff = diff_commit_file(&runner, &second, file("big.txt"), load_all, false).unwrap();
         (
             diff.kind.clone(),
             diff.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
@@ -260,4 +260,28 @@ fn compares_any_two_revisions_by_file() {
     );
     assert!(compare(&repo.runner(false), "--output=x", "HEAD").is_err());
     assert!(compare(&repo.runner(false), "nope", "HEAD").is_err());
+}
+
+#[test]
+fn whitespace_only_changes_can_be_left_out() {
+    let repo = TestRepo::new();
+    write(&repo, "a.rs", b"fn main() {\n    run();\n}\n");
+    commit_all(&repo, 1, "first");
+    write(&repo, "a.rs", b"fn main() {\n        run();\n}\n");
+    let second = commit_all(&repo, 2, "indent");
+    let runner = repo.runner(false);
+    let file = &commit_files(&runner, &second).unwrap()[0];
+    assert_eq!(
+        diff_commit_file(&runner, &second, file, false, false)
+            .unwrap()
+            .hunks
+            .len(),
+        1
+    );
+    assert!(
+        diff_commit_file(&runner, &second, file, false, true)
+            .unwrap()
+            .hunks
+            .is_empty()
+    );
 }

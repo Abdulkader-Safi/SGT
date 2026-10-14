@@ -19,7 +19,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M6: remotes and sync | Built, 115 tests pass. Needs a check against a real server, see below |
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
-| M9: history tools | Started: conflict prediction, the reflog, compare and changed-word marks are built. Blame and file history came with M12. Interactive rebase and the whitespace toggle are still to do |
+| M9: history tools | Built except interactive rebase: conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12 |
 | M10: comfort | Not started |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
@@ -547,6 +547,14 @@ Still needs a check by eye: the dialog with many files.
 - The contrast test now also checks text on the two stronger colours.
 
 Still needs a check by eye: the marks in both themes.
+
+### Ignore whitespace (built)
+
+- "Ignore whitespace" in the diff header reads the shown diff again with `-w`: for a changed file, a commit's file, and the file history. A file whose only change is whitespace shows as unchanged.
+- It holds for this run of the app and is not saved.
+- While it is on, lines and hunks cannot be staged, unstaged or discarded from the diff, because a patch built from it would not fit the file. Whole files still can.
+
+Still needs a check by eye: the checkbox in a narrow diff header.
 
 ## M12: blame, file history, worktrees and agent sessions
 

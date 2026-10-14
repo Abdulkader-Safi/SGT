@@ -539,6 +539,7 @@ impl Render for DiffPane {
         };
         let busy = repo.busy;
         let trusted = repo.repository.trusted;
+        let ignore_whitespace = repo.ignore_whitespace;
         let note = |icon: &str, title: String, text: String| {
             empty_state(icon, title, text, palette).into_any_element()
         };
@@ -613,6 +614,15 @@ impl Render for DiffPane {
                     .font_weight(FontWeight::MEDIUM)
                     .child(path.map(ToString::to_string).unwrap_or_default()),
             )
+            .child({
+                let repo = self.repo.clone();
+                gpui_kit::component::checkbox::Checkbox::new("ignore-whitespace")
+                    .label(t!("diff.ignore_whitespace").into_owned())
+                    .checked(ignore_whitespace)
+                    .on_click(move |_, _, cx| {
+                        repo.update(cx, |repo, cx| repo.toggle_whitespace(cx))
+                    })
+            })
             .child(
                 h_flex()
                     .flex_none()
@@ -652,7 +662,8 @@ impl Render for DiffPane {
             _ => {
                 // A cut diff ends mid-hunk, so its parts cannot be applied.
                 let cut = matches!(diff.kind, DiffKind::TooLarge { .. });
-                let can_edit = origin != Origin::Commit && trusted && !cut;
+                // A diff without its whitespace changes no longer fits the file.
+                let can_edit = origin != Origin::Commit && trusted && !cut && !ignore_whitespace;
                 let rows = self.rows.clone();
                 let styles = self.styles.clone();
                 let words = self.words.clone();

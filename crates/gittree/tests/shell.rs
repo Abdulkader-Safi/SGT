@@ -1598,6 +1598,57 @@ fn the_activity_log_opens_with_the_commands_run(cx: &mut TestAppContext) {
     assert!(shell.in_window(cx, |window, _| window.try_find("ok").is_some()));
 }
 
+/// FR-SET-05: the commit box shows who commits, and a change goes to this
+/// repository's own config.
+#[gpui_kit::test]
+fn the_identity_shows_and_changes_for_this_repository(cx: &mut TestAppContext) {
+    use gittree::repo_state::{Op, Scope};
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.select_wip(cx)));
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.refresh(Scope::Status, cx)));
+    cx.run_until_parked();
+    assert!(shell.in_window(cx, |window, _| window.try_find("change-identity").is_some()));
+
+    let op = Op::SetIdentity {
+        name: "Grace".into(),
+        email: "grace@example.com".into(),
+    };
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.run_op(op, cx)));
+    for _ in 0..200 {
+        cx.run_until_parked();
+        if cx.update(|cx| repo.read(cx).identity.0 == "Grace") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    cx.update(|cx| {
+        assert_eq!(
+            repo.read(cx).identity,
+            ("Grace".to_owned(), "grace@example.com".to_owned())
+        )
+    });
+    let local = Command::new("git")
+        .current_dir(dir.path())
+        .args(["config", "--local", "user.email"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(local.stdout).unwrap(),
+        "grace@example.com\n"
+    );
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

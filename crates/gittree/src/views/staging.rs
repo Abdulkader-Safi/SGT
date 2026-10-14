@@ -739,6 +739,33 @@ impl Render for StagingView {
                             .on_click(write_message),
                     ),
             )
+            .child({
+                let (name, email) = &self.repo.read(cx).identity;
+                let unset = name.is_empty() || email.is_empty();
+                let text = if unset {
+                    t!("identity.unset").into_owned()
+                } else {
+                    t!("identity.as", name = name, email = email).into_owned()
+                };
+                let repo = self.repo.clone();
+                h_flex()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().child(note(
+                        "info",
+                        text,
+                        if unset { p.warning } else { p.text_tertiary },
+                    )))
+                    .child(
+                        Button::new("change-identity")
+                            .xsmall()
+                            .ghost()
+                            .disabled(!trusted)
+                            .label(t!("identity.change").into_owned())
+                            .on_click(move |_, window, cx| {
+                                super::dialogs::identity(repo.clone(), window, cx)
+                            }),
+                    )
+            })
             .child(
                 h_flex()
                     .gap_2()

@@ -310,6 +310,52 @@ pub fn set_upstream(
     );
 }
 
+/// Changes the name and email commits get in this repository. The dialog
+/// says it writes this repository's config only (FR-SET-05).
+pub fn identity(repo: Entity<RepoState>, window: &mut Window, cx: &mut App) {
+    let (name, email) = repo.read(cx).identity.clone();
+    let name = text_input(&name, "Ada Lovelace".into(), window, cx);
+    let email = text_input(&email, "ada@example.com".into(), window, cx);
+    let shown = (name.clone(), email.clone());
+    form(
+        t!("identity.title").into_owned(),
+        Some(t!("identity.text").into_owned()),
+        t!("identity.action").into_owned(),
+        Some(name.clone()),
+        move |_, cx| {
+            let p = palette(cx);
+            v_flex()
+                .gap(px(14.))
+                .child(field(
+                    t!("identity.name").into_owned(),
+                    Input::new(&shown.0).id("identity-name").small(),
+                    None,
+                    p,
+                ))
+                .child(field(
+                    t!("identity.email").into_owned(),
+                    Input::new(&shown.1).id("identity-email").small(),
+                    None,
+                    p,
+                ))
+                .into_any_element()
+        },
+        move |_, cx| {
+            let name = name.read(cx).value().trim().to_owned();
+            let email = email.read(cx).value().trim().to_owned();
+            if name.is_empty() || email.is_empty() {
+                return false;
+            }
+            repo.update(cx, |repo, cx| {
+                repo.run_op(Op::SetIdentity { name, email }, cx)
+            });
+            true
+        },
+        window,
+        cx,
+    );
+}
+
 /// Names the branch a stash becomes (FR-STASH-02).
 pub fn stash_branch(repo: Entity<RepoState>, index: u32, window: &mut Window, cx: &mut App) {
     let name = text_input("", t!("branch.name_hint").into_owned(), window, cx);

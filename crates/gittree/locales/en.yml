@@ -586,6 +586,16 @@ snapshots:
   close: "Close"
   menu: "Snapshots…"
 
+identity:
+  as: "Committing as %{name} <%{email}>"
+  unset: "No name or email is set, so Git will refuse to commit."
+  change: "Change…"
+  title: "Name and email for this repository"
+  text: "Commits made here get this name and email. It is saved in this repository's own Git config. Your other repositories and your global config keep theirs."
+  name: "Name"
+  email: "Email"
+  action: "Save"
+
 upstream:
   title: "Upstream of %{branch}"
   text: "The remote branch Pull and Push use, and the ahead and behind counts compare with. Leave it empty to stop tracking."

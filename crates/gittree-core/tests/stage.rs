@@ -514,3 +514,25 @@ fn a_file_or_a_pattern_is_added_to_gitignore() {
     assert!(stage::add_ignore(&repo.runner(false), "x").is_err());
     assert_eq!(stage::ignore_pattern(&"#notes ".into()), "/\\#notes\\ ");
 }
+
+#[test]
+fn the_identity_is_read_and_set_for_this_repository_only() {
+    let repo = TestRepo::new();
+    let runner = repo.runner(true);
+    let home_config =
+        std::fs::read_to_string(std::env::var("GIT_CONFIG_GLOBAL").unwrap()).unwrap_or_default();
+    stage::set_identity(&runner, "Grace", "grace@example.com").unwrap();
+    assert_eq!(
+        stage::identity(&runner),
+        ("Grace".to_owned(), "grace@example.com".to_owned())
+    );
+    assert_eq!(repo.git(1, &["config", "--local", "user.name"]), "Grace");
+    // The global config is as it was.
+    assert_eq!(
+        std::fs::read_to_string(std::env::var("GIT_CONFIG_GLOBAL").unwrap()).unwrap_or_default(),
+        home_config
+    );
+    assert!(stage::set_identity(&runner, "--global", "x@example.com").is_err());
+    assert!(stage::set_identity(&runner, "A\nB", "x@example.com").is_err());
+    assert!(stage::set_identity(&repo.runner(false), "Ada", "ada@example.com").is_err());
+}

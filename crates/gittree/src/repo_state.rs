@@ -112,6 +112,11 @@ pub enum Op {
         branch: String,
         upstream: Option<String>,
     },
+    /// The name and email for this repository's own config.
+    SetIdentity {
+        name: String,
+        email: String,
+    },
     /// A new branch where the stash was made, with the stash applied.
     StashBranch {
         name: String,
@@ -463,6 +468,9 @@ pub struct RepoState {
     pub sessions: Vec<Session>,
     /// The calls agents made through the MCP server, oldest first, and
     /// the changes waiting for a yes or no (FR-AGENT-02).
+    /// The name and email Git puts on commits here. Empty when not set.
+    pub identity: (String, String),
+    identity_task: Task<()>,
     /// Diffs leave out changes that are only whitespace. For this run of
     /// the app only.
     pub ignore_whitespace: bool,
@@ -588,6 +596,8 @@ impl RepoState {
             ai_task: Task::ready(()),
             explain_task: Task::ready(()),
             sessions: Vec::new(),
+            identity: Default::default(),
+            identity_task: Task::ready(()),
             ignore_whitespace: false,
             agent_calls: Vec::new(),
             agent_requests: Vec::new(),
@@ -600,6 +610,7 @@ impl RepoState {
         };
         this.sessions = agent::load(&this.repository.common_dir);
         this.refresh(Scope::All, cx);
+        this.load_identity(cx);
         // Old journal entries go once per open, quietly.
         let (journal, runner) = (this.journal.clone(), this.runner.clone());
         cx.background_spawn(async move {
@@ -848,6 +859,7 @@ impl RepoState {
             // The watcher was muted while ops ran. One refresh covers them.
             self.refresh_status(cx);
             self.refresh_refs(false, cx);
+            self.load_identity(cx);
             cx.notify();
             return;
         };
@@ -1858,6 +1870,21 @@ impl RepoState {
         }
     }
 
+    /// Reads the name and email Git will commit with (FR-SET-05).
+    pub fn load_identity(&mut self, cx: &mut Context<Self>) {
+        let runner = self.runner.clone();
+        let read = cx.background_spawn(async move { stage::identity(&runner) });
+        self.identity_task = cx.spawn(async move |this, cx| {
+            let identity = read.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.identity != identity {
+                    this.identity = identity;
+                    cx.notify();
+                }
+            });
+        });
+    }
+
     /// Fetches when the interval set in Settings has passed since the last
     /// background fetch, and nothing else is running (FR-SYNC-05).
     // ponytail: a remote that asks for a password asks each time. Leave
@@ -2074,6 +2101,7 @@ fn op_label(op: &Op) -> String {
         // drops the stash only once it is applied on the new branch.
         // ponytail: so no undo entry. Add one if people miss it.
         | Op::SetUpstream { .. }
+        | Op::SetIdentity { .. }
         | Op::StashBranch { .. }
         | Op::Unstage(_)
         // Each of its commits gets a label of its own.
@@ -2156,6 +2184,9 @@ fn execute(
         Op::Ignore(pattern) => stage::add_ignore(runner, &pattern).map(|()| Done::Changed),
         Op::SetUpstream { branch, upstream } => {
             branch::set_upstream(runner, &branch, upstream.as_deref()).map(|()| Done::Changed)
+        }
+        Op::SetIdentity { name, email } => {
+            stage::set_identity(runner, &name, &email).map(|()| Done::Changed)
         }
         Op::StashBranch { name, index } => {
             branch::stash_branch(runner, &name, index).map(|()| Done::Changed)

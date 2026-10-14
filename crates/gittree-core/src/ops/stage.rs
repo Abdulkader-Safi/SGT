@@ -168,3 +168,35 @@ pub fn add_ignore(runner: &GitRunner, pattern: &str) -> Result<(), GitError> {
     };
     writeln!(out, "{gap}{pattern}").map_err(fail)
 }
+
+/// The name and email Git will put on a commit here, from every config
+/// Git reads. An empty string when one is not set (FR-SET-05).
+pub fn identity(runner: &GitRunner) -> (String, String) {
+    let get = |key: &str| {
+        runner
+            .read(["config", "--get", key])
+            .map(|out| String::from_utf8_lossy(&out).trim().to_owned())
+            .unwrap_or_default()
+    };
+    (get("user.name"), get("user.email"))
+}
+
+/// Sets the name and email for this repository only, in its own config.
+/// The global config is never touched.
+pub fn set_identity(runner: &GitRunner, name: &str, email: &str) -> Result<(), GitError> {
+    for value in [name, email] {
+        if value.trim().is_empty() || value.starts_with('-') || value.contains('\n') {
+            return Err(GitError {
+                kind: crate::error::GitErrorKind::Other,
+                args: Vec::new(),
+                exit_code: None,
+                stderr: "A name or email cannot be empty, start with a dash or have a line break."
+                    .into(),
+            });
+        }
+    }
+    runner.write(["config", "--local", "user.name", name])?;
+    runner
+        .write(["config", "--local", "user.email", email])
+        .map(drop)
+}

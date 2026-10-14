@@ -473,6 +473,8 @@ pub struct RepoState {
     pub hidden: Vec<String>,
     /// The name and email Git puts on commits here. Empty when not set.
     pub identity: (String, String),
+    /// The user's `commit.template`, when one is set.
+    pub template: Option<String>,
     identity_task: Task<()>,
     /// Diffs leave out changes that are only whitespace. For this run of
     /// the app only.
@@ -601,6 +603,7 @@ impl RepoState {
             sessions: Vec::new(),
             hidden: Vec::new(),
             identity: Default::default(),
+            template: None,
             identity_task: Task::ready(()),
             ignore_whitespace: false,
             agent_calls: Vec::new(),
@@ -1892,12 +1895,15 @@ impl RepoState {
     /// Reads the name and email Git will commit with (FR-SET-05).
     pub fn load_identity(&mut self, cx: &mut Context<Self>) {
         let runner = self.runner.clone();
-        let read = cx.background_spawn(async move { stage::identity(&runner) });
+        let read = cx.background_spawn(async move {
+            (stage::identity(&runner), stage::commit_template(&runner))
+        });
         self.identity_task = cx.spawn(async move |this, cx| {
-            let identity = read.await;
+            let (identity, template) = read.await;
             let _ = this.update(cx, |this, cx| {
-                if this.identity != identity {
+                if this.identity != identity || this.template != template {
                     this.identity = identity;
+                    this.template = template;
                     cx.notify();
                 }
             });

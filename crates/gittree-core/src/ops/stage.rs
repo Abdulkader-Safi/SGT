@@ -200,3 +200,19 @@ pub fn set_identity(runner: &GitRunner, name: &str, email: &str) -> Result<(), G
         .write(["config", "--local", "user.email", email])
         .map(drop)
 }
+
+/// The text of the user's `commit.template`, without its comment lines.
+/// `None` when none is set or it cannot be read. Only read in a trusted
+/// repository, so a cloned config cannot point the app at another file.
+pub fn commit_template(runner: &GitRunner) -> Option<String> {
+    if !runner.trusted() {
+        return None;
+    }
+    let path = runner
+        .read(["config", "--path", "--get", "commit.template"])
+        .ok()?;
+    let path = String::from_utf8_lossy(&path).trim().to_owned();
+    let text = std::fs::read_to_string(runner.dir().join(path)).ok()?;
+    let kept: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
+    Some(kept.join("\n").trim().to_owned()).filter(|text| !text.is_empty())
+}

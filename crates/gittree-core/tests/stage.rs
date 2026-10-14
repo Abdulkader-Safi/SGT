@@ -555,3 +555,16 @@ fn a_commit_that_cannot_be_signed_says_so() {
             .is_err()
     );
 }
+
+#[test]
+fn the_commit_template_is_read_without_comments() {
+    let repo = TestRepo::new();
+    assert_eq!(stage::commit_template(&repo.runner(true)), None);
+    repo.write("msg.txt", b"# Say why\nSummary\n\nWhy:\n");
+    repo.git(1, &["config", "commit.template", "msg.txt"]);
+    assert_eq!(
+        stage::commit_template(&repo.runner(true)).as_deref(),
+        Some("Summary\n\nWhy:")
+    );
+    assert_eq!(stage::commit_template(&repo.runner(false)), None);
+}

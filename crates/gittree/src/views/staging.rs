@@ -4,7 +4,7 @@ use gittree_core::model::{RepoPath, StatusEntry};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -42,6 +42,66 @@ pub struct StagingView {
     /// Focus for the lists and the diff. Space works on what is selected
     /// while it is here, and types a space while a text field has it.
     pub focus: FocusHandle,
+}
+
+/// The user's own recent summaries, newest first, each once.
+fn recent_summaries(
+    commits: &[gittree_core::model::Commit],
+    email: &str,
+    limit: usize,
+) -> Vec<String> {
+    let mut seen = Vec::new();
+    for commit in commits.iter().filter(|c| &*c.author_email == email) {
+        if !seen.iter().any(|s: &String| s.as_str() == &*commit.summary) {
+            seen.push(commit.summary.to_string());
+        }
+        if seen.len() == limit {
+            break;
+        }
+    }
+    seen
+}
+
+/// Other people who wrote commits here, most recent first, each once.
+fn co_authors(
+    commits: &[gittree_core::model::Commit],
+    me: &str,
+    limit: usize,
+) -> Vec<(String, String)> {
+    let mut seen: Vec<(String, String)> = Vec::new();
+    for commit in commits.iter().filter(|c| &*c.author_email != me) {
+        if !seen
+            .iter()
+            .any(|(_, email)| email.as_str() == &*commit.author_email)
+        {
+            seen.push((
+                commit.author_name.to_string(),
+                commit.author_email.to_string(),
+            ));
+        }
+        if seen.len() == limit {
+            break;
+        }
+    }
+    seen
+}
+
+/// The description with a trailer added at its end, once. Trailers sit
+/// together after a blank line.
+fn with_trailer(description: &str, trailer: &str) -> String {
+    let description = description.trim_end();
+    if description.lines().any(|line| line.trim() == trailer) {
+        return description.to_owned();
+    }
+    let last = description.lines().last().unwrap_or("");
+    let gap = if description.is_empty() {
+        ""
+    } else if last.contains(": ") && last.split(':').next().is_some_and(|key| !key.contains(' ')) {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    format!("{description}{gap}{trailer}")
 }
 
 /// Splits a commit message into its summary and the rest.
@@ -566,6 +626,70 @@ fn ignore_menu(
     }
 }
 
+impl StagingView {
+    /// "Insert": the user's recent summaries, a co-author trailer, and the
+    /// commit template when one is set (FR-STAGE-07).
+    fn insert_menu(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let repo = self.repo.read(cx);
+        let me = repo.identity.1.clone();
+        let recent = recent_summaries(&repo.history.commits, &me, 8);
+        let people = co_authors(&repo.history.commits, &me, 8);
+        let template = repo.template.clone();
+        let view = cx.entity().downgrade();
+        Button::new("insert-message")
+            .xsmall()
+            .ghost()
+            .label(t!("commit.insert").into_owned())
+            .dropdown_menu(move |mut menu, _, _| {
+                let fill = |summary: Option<String>, trailer: Option<String>| {
+                    let view = view.clone();
+                    move |_: &ClickEvent, window: &mut Window, cx: &mut gpui_kit::App| {
+                        let _ = view.update(cx, |this, cx| {
+                            let (old_summary, old_description) = this.message(cx);
+                            let summary = summary.clone().unwrap_or(old_summary);
+                            let description = match &trailer {
+                                Some(trailer) => with_trailer(&old_description, trailer),
+                                None => old_description,
+                            };
+                            this.set_message(&summary, &description, window, cx);
+                        });
+                    }
+                };
+                if let Some(template) = &template {
+                    let (summary, description) = split_message(template);
+                    let view = view.clone();
+                    menu = menu
+                        .item(
+                            PopupMenuItem::new(t!("commit.template").into_owned()).on_click(
+                                move |_, window, cx| {
+                                    let _ = view.update(cx, |this, cx| {
+                                        this.set_message(&summary, &description, window, cx)
+                                    });
+                                },
+                            ),
+                        )
+                        .separator();
+                }
+                menu = menu.label(t!("commit.recent").into_owned());
+                for summary in &recent {
+                    menu = menu.item(
+                        PopupMenuItem::new(summary.clone())
+                            .on_click(fill(Some(summary.clone()), None)),
+                    );
+                }
+                menu = menu.separator().label(t!("commit.co_author").into_owned());
+                for (name, email) in &people {
+                    let trailer = format!("Co-authored-by: {name} <{email}>");
+                    menu = menu.item(
+                        PopupMenuItem::new(format!("{name} <{email}>"))
+                            .on_click(fill(None, Some(trailer))),
+                    );
+                }
+                menu
+            })
+    }
+}
+
 impl Render for StagingView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
@@ -662,6 +786,7 @@ impl Render for StagingView {
                     ),
             )
             .child(Textarea::new(&self.description).small())
+            .child(h_flex().child(self.insert_menu(cx)))
             .when(too_long, |commit| {
                 commit.child(note("info", t!("commit.too_long").into_owned(), p.warning))
             })
@@ -820,6 +945,40 @@ impl Render for StagingView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_messages_co_authors_and_trailers() {
+        let commit = |email: &str, name: &str, summary: &str| gittree_core::model::Commit {
+            oid: "0".into(),
+            parents: Vec::new(),
+            author_name: name.into(),
+            author_email: email.into(),
+            author_time: 0,
+            summary: summary.into(),
+        };
+        let commits = [
+            commit("me@x", "Me", "Fix the parser"),
+            commit("ada@x", "Ada", "Add tabs"),
+            commit("me@x", "Me", "Fix the parser"),
+            commit("me@x", "Me", "Start"),
+            commit("ada@x", "Ada", "More"),
+            commit("bo@x", "Bo", "Docs"),
+        ];
+        assert_eq!(
+            recent_summaries(&commits, "me@x", 5),
+            ["Fix the parser", "Start"]
+        );
+        assert_eq!(
+            co_authors(&commits, "me@x", 5),
+            [("Ada".into(), "ada@x".into()), ("Bo".into(), "bo@x".into())]
+        );
+        let ada = "Co-authored-by: Ada <ada@x>";
+        assert_eq!(with_trailer("", ada), ada);
+        assert_eq!(with_trailer("Why.\n", ada), format!("Why.\n\n{ada}"));
+        let both = with_trailer(&with_trailer("Why.", ada), "Co-authored-by: Bo <bo@x>");
+        assert_eq!(both, format!("Why.\n\n{ada}\nCo-authored-by: Bo <bo@x>"));
+        assert_eq!(with_trailer(&both, ada), both);
+    }
 
     #[test]
     fn a_message_splits_into_summary_and_description_and_back() {

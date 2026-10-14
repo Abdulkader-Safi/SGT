@@ -354,6 +354,10 @@ commit:
   committing: "Committing…"
   too_long: "Long summaries are cut off in most Git tools. You can still commit."
   amend_action: "Amend commit"
+  insert: "Insert"
+  template: "Your commit template"
+  recent: "Your recent messages"
+  co_author: "Add a co-author"
 
 discard:
   title: "Discard changes?"

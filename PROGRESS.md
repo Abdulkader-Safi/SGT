@@ -20,7 +20,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9: history tools | Built: interactive rebase, conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12. 161 tests pass. Waits on checks by eye |
-| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity, completion toasts, `change:` search, hiding branches and the signing error are built. Zoom is on hold, see below |
+| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity, completion toasts, `change:` search, hiding branches, the signing error and the Insert menu are built. Still to do: `keymap.json`, high-contrast and user themes, and repository tabs. Zoom is on hold, see below |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
@@ -627,6 +627,13 @@ Still needs a check by eye: the dialog with many commits, and a reword with a lo
 - Commits are signed by Git itself whenever the user's config asks (`commit.gpgsign` with GPG, SSH or X.509), as before.
 - A failed signature is now its own error kind, `SigningFailed`, with a message that says signing was asked for and failed, what to check, and that nothing was committed. Its patterns are checked first, so a missing key is not reported as a missing branch.
 - A test runs a real commit with `gpg.program` set to a program that always fails.
+
+### Recent messages, co-authors and the commit template (built)
+
+- "Insert" under the description opens a menu with the user's own recent summaries (up to eight, each once, matched by the identity's email), people who wrote commits here (up to eight), and "Your commit template" when `commit.template` is set.
+- A summary replaces the summary field. A person adds `Co-authored-by: Name <email>` to the description, once, with trailers kept together after a blank line.
+- The template's comment lines are left out. It is read only in a trusted repository, so a cloned repository's config cannot point the app at another file.
+- Recent and co-author lists come from the commits already loaded in the graph.
 
 ### Zoom (on hold)
 

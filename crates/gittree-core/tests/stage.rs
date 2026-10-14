@@ -536,3 +536,22 @@ fn the_identity_is_read_and_set_for_this_repository_only() {
     assert!(stage::set_identity(&runner, "A\nB", "x@example.com").is_err());
     assert!(stage::set_identity(&repo.runner(false), "Ada", "ada@example.com").is_err());
 }
+
+#[test]
+fn a_commit_that_cannot_be_signed_says_so() {
+    let repo = TestRepo::new();
+    repo.git(1, &["config", "user.name", "Ada"]);
+    repo.git(1, &["config", "user.email", "ada@example.com"]);
+    repo.write("a.txt", b"a\n");
+    repo.git(1, &["add", "a.txt"]);
+    // Signing is asked for, and the signing program always fails.
+    repo.git(1, &["config", "commit.gpgsign", "true"]);
+    repo.git(1, &["config", "gpg.program", "false"]);
+    let error = stage::commit(&repo.runner(true), "signed", false).unwrap_err();
+    assert_eq!(error.kind, GitErrorKind::SigningFailed, "{}", error.stderr);
+    assert!(
+        repo.runner(true)
+            .read(["rev-parse", "--verify", "-q", "HEAD"])
+            .is_err()
+    );
+}

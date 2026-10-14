@@ -14,6 +14,7 @@ errors:
   ref_exists: "That name is already in use."
   ref_not_found: "That branch, tag or commit does not exist."
   patch_does_not_apply: "The file changed after this diff was made. Refresh and try again."
+  signing_failed: "Your Git config asks for signed commits, and signing failed. Check that your GPG or SSH key is available and unlocked, or turn off commit.gpgsign. Nothing was committed."
   cancelled: "Cancelled."
   other: "Git reported an error."
 

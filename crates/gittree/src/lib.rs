@@ -67,6 +67,7 @@ pub fn error_message(kind: GitErrorKind) -> String {
         GitErrorKind::RefExists => "errors.ref_exists",
         GitErrorKind::RefNotFound => "errors.ref_not_found",
         GitErrorKind::PatchDoesNotApply => "errors.patch_does_not_apply",
+        GitErrorKind::SigningFailed => "errors.signing_failed",
         GitErrorKind::Cancelled => "errors.cancelled",
         GitErrorKind::Other => "errors.other",
     };

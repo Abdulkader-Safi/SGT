@@ -13,12 +13,14 @@ pub enum GitErrorKind {
     RefExists,
     RefNotFound,
     PatchDoesNotApply,
+    /// The commit was to be signed (GPG, SSH or X.509) and signing failed.
+    SigningFailed,
     Cancelled,
     Other,
 }
 
 impl GitErrorKind {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::GitNotFound,
         Self::GitTooOld,
         Self::NotARepository,
@@ -32,6 +34,7 @@ impl GitErrorKind {
         Self::RefExists,
         Self::RefNotFound,
         Self::PatchDoesNotApply,
+        Self::SigningFailed,
         Self::Cancelled,
         Self::Other,
     ];
@@ -67,6 +70,12 @@ impl GitError {
 pub fn classify(stderr: &str) -> GitErrorKind {
     use GitErrorKind::*;
     const PATTERNS: &[(&str, GitErrorKind)] = &[
+        // First: a signing error can mention a key "not found".
+        ("failed to sign the data", SigningFailed),
+        ("gpgsm failed", SigningFailed),
+        ("Couldn't load public key", SigningFailed),
+        ("No private key found", SigningFailed),
+        ("user.signingkey", SigningFailed),
         ("not a git repository", NotARepository),
         ("index.lock", IndexLocked),
         ("patch does not apply", PatchDoesNotApply),
@@ -160,6 +169,14 @@ mod tests {
                 RefNotFound,
             ),
             ("error: branch 'nope' not found", RefNotFound),
+            (
+                "error: gpg failed to sign the data\nfatal: failed to write commit object",
+                SigningFailed,
+            ),
+            (
+                "error: Couldn't load public key /k.pub: No such file or directory?\n\nfatal: failed to write commit object",
+                SigningFailed,
+            ),
             ("fatal: something nobody expected", Other),
             ("", Other),
         ];

@@ -19,7 +19,7 @@ use rust_i18n::t;
 use super::dialogs::confirm_destructive;
 use super::diff::DiffPane;
 use super::graph::mono;
-use super::ui::{caption, empty_state, ic, kbd, status_mark};
+use super::ui::{caption, empty_state, ic, status_mark};
 use crate::actions::StageSelection;
 use crate::app_state::AppState;
 use crate::palette::palette;
@@ -894,21 +894,24 @@ impl Render for StagingView {
                     )
             })
             .child(
+                // The checkbox gives way, so the button always fits: the
+                // shortcut is in the button's tooltip, not beside it.
                 h_flex()
                     .gap_2()
                     .child(
-                        Checkbox::new("amend")
-                            .label(t!("commit.amend").into_owned())
-                            .checked(amend)
-                            .disabled(!trusted || !has_commits)
-                            .on_click(cx.listener(|this, checked: &bool, window, cx| {
-                                this.set_amend(*checked, window, cx)
-                            })),
+                        div().flex_1().min_w_0().overflow_hidden().child(
+                            Checkbox::new("amend")
+                                .label(t!("commit.amend").into_owned())
+                                .checked(amend)
+                                .disabled(!trusted || !has_commits)
+                                .on_click(cx.listener(|this, checked: &bool, window, cx| {
+                                    this.set_amend(*checked, window, cx)
+                                })),
+                        ),
                     )
-                    .child(div().flex_1())
-                    .child(kbd("⌘↵", p))
                     .child(
                         Button::new("commit")
+                            .tooltip(crate::platform::shortcut("⌘↵"))
                             .primary()
                             .loading(busy)
                             .disabled(!can_commit)

@@ -1124,6 +1124,10 @@ fn an_agent_plans_commits_and_the_plan_is_applied(cx: &mut TestAppContext) {
     let outside = tempfile::tempdir().unwrap();
     isolate_git();
     git(dir.path(), &["init", "-q", "-b", "main"]);
+    // The app commits with the repository's own identity. Linux has no
+    // fallback from the host name, as macOS does.
+    git(dir.path(), &["config", "user.name", "Ada"]);
+    git(dir.path(), &["config", "user.email", "ada@example.com"]);
     std::fs::write(dir.path().join("a.rs"), "fn main() {}\n").unwrap();
     git(dir.path(), &["add", "-A"]);
     git(dir.path(), &["commit", "-q", "-m", "base"]);

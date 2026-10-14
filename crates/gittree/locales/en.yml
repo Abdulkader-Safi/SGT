@@ -537,6 +537,8 @@ sync:
   no_remote: "This repository has no remote yet. Add one from the Remotes group in the sidebar."
   nothing_to_force: "This branch is not on the remote yet. A normal push will publish it."
   pushed: "Pushed %{branch} to %{remote}."
+  fetched: "Fetched from every remote."
+  pulled: "Pulled the latest commits."
   cancel: "Cancel"
 
 credential:

@@ -900,6 +900,8 @@ impl RepoState {
                         this.after_commit = Some(oid);
                         cx.emit(RepoEvent::Committed);
                     }
+                    // The timer's fetch is quiet when it works, too.
+                    Ok(Done::Notice(_)) if quiet => {}
                     Ok(Done::Notice(text)) => cx.emit(RepoEvent::Notice(text)),
                     Ok(Done::SessionReady) => this.session_ready(cx),
                     Ok(Done::PullRequest(url)) => {
@@ -2434,13 +2436,15 @@ fn execute(
         Op::ResolveSide { path, side } => {
             merge::resolve_side(runner, &path, side).map(|()| Done::Changed)
         }
-        Op::Fetch => remote::fetch(runner, &net.env, &net.cancel, report).map(|()| Done::Changed),
+        // A toast says a fetch or pull ended well (FR-STATE-06).
+        Op::Fetch => remote::fetch(runner, &net.env, &net.cancel, report)
+            .map(|()| Done::Notice(t!("sync.fetched").into_owned())),
         Op::Pull(_) => {
             // A pull can stop on a conflict like a merge or a rebase.
             let pulled = remote::pull(runner, net.pull_mode, &net.env, &net.cancel, report);
             match pulled {
                 Err(_) if merge::in_progress(runner, git_dir).is_some() => Ok(Done::Conflict),
-                other => other.map(|()| Done::Changed),
+                other => other.map(|()| Done::Notice(t!("sync.pulled").into_owned())),
             }
         }
         Op::Push { force } => {

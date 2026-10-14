@@ -731,6 +731,19 @@ fn pushes_fetches_pulls_and_clones_through_the_app(cx: &mut TestAppContext) {
     git_in(other.path(), &["add", "-A"]);
     git_in(other.path(), &["commit", "-q", "-m", "theirs"]);
     git_in(other.path(), &["push", "-q", "origin", "main"]);
+    // FR-STATE-06: each one ends with a toast.
+    let notices = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _watch = cx.update(|cx| {
+        let notices = notices.clone();
+        cx.subscribe(
+            &repo,
+            move |_, event: &gittree::repo_state::RepoEvent, _| {
+                if let gittree::repo_state::RepoEvent::Notice(text) = event {
+                    notices.borrow_mut().push(text.clone());
+                }
+            },
+        )
+    });
     run(cx, Op::Fetch);
     cx.update(|cx| {
         let repo = repo.read(cx);
@@ -739,6 +752,10 @@ fn pushes_fetches_pulls_and_clones_through_the_app(cx: &mut TestAppContext) {
     });
     run(cx, Op::Pull(PullMode::FfOnly));
     assert!(dir.path().join("b.txt").exists());
+    assert_eq!(
+        *notices.borrow(),
+        ["Fetched from every remote.", "Pulled the latest commits."]
+    );
 
     // Clone opens the new repository, trusted.
     let dest = tempfile::tempdir().unwrap();

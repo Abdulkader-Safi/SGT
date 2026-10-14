@@ -163,6 +163,22 @@ impl Render for SettingsView {
             ))
             .item(
                 SettingItem::new(
+                    label("settings.auto_fetch"),
+                    choice(
+                        &[
+                            (0, "settings.auto_fetch_off"),
+                            (5, "settings.auto_fetch_5"),
+                            (15, "settings.auto_fetch_15"),
+                            (60, "settings.auto_fetch_60"),
+                        ],
+                        |s| s.auto_fetch_minutes,
+                        |s, v| s.auto_fetch_minutes = v,
+                    ),
+                )
+                .description(label("settings.auto_fetch_help")),
+            )
+            .item(
+                SettingItem::new(
                     label("settings.git_path"),
                     text(
                         |s| {

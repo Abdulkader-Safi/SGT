@@ -505,6 +505,12 @@ pub struct RepoState {
     diff_task: Task<()>,
     search_task: Task<()>,
     _watch: Task<()>,
+    /// Checks once a minute whether a background fetch is due.
+    _auto_fetch: Task<()>,
+    last_fetch: Option<std::time::Instant>,
+    /// The running fetch was started by the timer, so a failure is only
+    /// logged: being offline should not bring a toast every few minutes.
+    quiet_fetch: bool,
 }
 
 impl EventEmitter<RepoEvent> for RepoState {}
@@ -514,6 +520,19 @@ impl RepoState {
         let journal = Journal::new(&repository.common_dir);
         let mut this = Self {
             _watch: watch(&repository.path, cx),
+            _auto_fetch: cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_secs(60))
+                        .await;
+                    if this.update(cx, |this, cx| this.auto_fetch(cx)).is_err() {
+                        return;
+                    }
+                }
+            }),
+            // The first background fetch waits a full interval.
+            last_fetch: Some(std::time::Instant::now()),
+            quiet_fetch: false,
             repository,
             runner,
             history: History::default(),
@@ -843,6 +862,7 @@ impl RepoState {
             let _ = this.update(cx, |this, cx| {
                 this.net_running = false;
                 this.progress = None;
+                let quiet = std::mem::take(&mut this.quiet_fetch);
                 match result {
                     Ok(Done::Changed) => {}
                     Ok(Done::Conflict) => {
@@ -867,6 +887,9 @@ impl RepoState {
                     Ok(Done::WorktreeRemoved(path)) => {
                         this.sessions.retain(|session| session.path != path);
                         this.save_sessions();
+                    }
+                    Err(error) if quiet => {
+                        tracing::warn!(%error, "background fetch failed");
                     }
                     Err(error) => {
                         this.pending_session = None;
@@ -1823,6 +1846,23 @@ impl RepoState {
         }
     }
 
+    /// Fetches when the interval set in Settings has passed since the last
+    /// background fetch, and nothing else is running (FR-SYNC-05).
+    // ponytail: a remote that asks for a password asks each time. Leave
+    // auto-fetch off for those, or use a credential helper.
+    fn auto_fetch(&mut self, cx: &mut Context<Self>) {
+        let minutes = crate::app_state::app_state(cx)
+            .read(cx)
+            .settings
+            .auto_fetch_minutes;
+        let idle = self.runner.trusted() && !self.busy && !self.remotes.is_empty();
+        if idle && fetch_due(minutes, self.last_fetch.map(|at| at.elapsed())) {
+            self.last_fetch = Some(std::time::Instant::now());
+            self.quiet_fetch = true;
+            self.run_op(Op::Fetch, cx);
+        }
+    }
+
     /// Turns ignoring whitespace on or off, and reads the shown diff again.
     pub fn toggle_whitespace(&mut self, cx: &mut Context<Self>) {
         self.ignore_whitespace = !self.ignore_whitespace;
@@ -2482,6 +2522,12 @@ pub fn entry_paths<'a>(entries: impl IntoIterator<Item = &'a StatusEntry>) -> Ve
         .collect()
 }
 
+/// Whether a background fetch is due. 0 minutes is off.
+fn fetch_due(minutes: u32, since_last: Option<Duration>) -> bool {
+    let every = Duration::from_secs(u64::from(minutes) * 60);
+    minutes > 0 && since_last.is_none_or(|since| since >= every)
+}
+
 /// Splits entries into tracked and untracked paths, for a discard.
 pub fn discard_paths<'a>(
     entries: impl IntoIterator<Item = &'a StatusEntry>,
@@ -2582,6 +2628,15 @@ fn watch(path: &Path, cx: &mut Context<RepoState>) -> Task<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_background_fetch_is_due_once_the_interval_has_passed() {
+        let minutes = |n: u64| Some(Duration::from_secs(n * 60));
+        assert!(!fetch_due(0, minutes(1000)));
+        assert!(!fetch_due(5, minutes(4)));
+        assert!(fetch_due(5, minutes(5)));
+        assert!(fetch_due(15, None));
+    }
 
     fn commit(oid: &str, author: &str, summary: &str) -> Commit {
         Commit {

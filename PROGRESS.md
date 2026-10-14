@@ -20,7 +20,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9: history tools | Built: interactive rebase, conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12. 161 tests pass. Waits on checks by eye |
-| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity and completion toasts are built |
+| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity, completion toasts and `change:` search are built. Zoom is on hold, see below |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
@@ -608,6 +608,16 @@ Still needs a check by eye: the dialog with many commits, and a reword with a lo
 
 - Fetch and Pull now end with a toast, as Push already did. A failure already showed one.
 - The timer's background fetch shows none, whether it works or fails.
+
+### `change:` search (built)
+
+- `change:text` in the search field finds the commits, on every branch, that added or removed `text`, through `git log -S`. Like `file:`, Git answers it, so it searches all history, not only the loaded commits.
+- The text is glued to `-S` as one argument, so it can never be read as an option.
+- The placeholder now lists `change:`.
+
+### Zoom (on hold)
+
+FR-SET-04 asks for zooming the whole interface from 50% to 300%. GPUI changes the window's scale factor only in tests, and `rem` sizes scale only what is sized in `rem`. The views size almost everything in `px` (about 370 places), so zooming would mean moving those to `rem` first. That is a large mechanical change across every view, so it waits for the owner's call. The UI font size setting still changes text size.
 
 ## M12: blame, file history, worktrees and agent sessions
 

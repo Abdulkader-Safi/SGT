@@ -1969,8 +1969,9 @@ impl RepoState {
     }
 
     /// Searches the loaded commits. Plain words match the summary, author
-    /// or hash. `author:` limits to the author, and `file:` asks Git which
-    /// commits touched a path.
+    /// or hash. `author:` limits to the author. `file:` asks Git which
+    /// commits touched a path, and `change:` which added or removed a
+    /// piece of text (FR-GRAPH-06).
     pub fn set_search(&mut self, query: String, cx: &mut Context<Self>) {
         if self.search.query != query {
             self.search.query = query;
@@ -1983,25 +1984,15 @@ impl RepoState {
         let query = self.search.query.trim().to_owned();
         self.search_task = Task::ready(());
         self.search.running = false;
-        if let Some(path) = query.strip_prefix("file:").map(str::trim) {
+        if let Some(args) = git_search(&query) {
             self.search.matches.clear();
-            if path.is_empty() {
+            if args.is_empty() {
                 cx.notify();
                 return;
             }
             self.search.running = true;
             let runner = self.runner.clone();
-            let path = path.to_owned();
-            let read = cx.background_spawn(async move {
-                runner.read([
-                    "log",
-                    "--exclude=refs/gittree/*",
-                    "--all",
-                    "--format=%H",
-                    "--",
-                    &path,
-                ])
-            });
+            let read = cx.background_spawn(async move { runner.read(args) });
             self.search_task = cx.spawn(async move |this, cx| {
                 let result = read.await;
                 let _ = this.update(cx, |this, cx| {
@@ -2598,7 +2589,30 @@ pub fn discard_paths<'a>(
     (entry_paths(tracked), entry_paths(untracked))
 }
 
-/// Rows whose commit matches a query that is not a `file:` search.
+/// The `git log` arguments for a search Git answers: `file:` and
+/// `change:`. `None` for a search of the loaded commits, and no arguments
+/// for one with nothing after its prefix.
+fn git_search(query: &str) -> Option<Vec<String>> {
+    let log = |last: Vec<String>| {
+        let mut args: Vec<String> = ["log", "--exclude=refs/gittree/*", "--all", "--format=%H"]
+            .map(String::from)
+            .into();
+        args.extend(last);
+        args
+    };
+    let (prefix, text) = query.split_once(':')?;
+    let text = text.trim();
+    let args = match prefix {
+        "file" => log(vec!["--".into(), text.into()]),
+        // One argument with the text glued on, so it can never be read as
+        // an option of its own.
+        "change" => log(vec![format!("-S{text}"), "--".into()]),
+        _ => return None,
+    };
+    Some(if text.is_empty() { Vec::new() } else { args })
+}
+
+/// Rows whose commit matches a query that Git does not answer.
 // ponytail: a linear scan with a lower-cased copy per commit. About 10 ms
 // for 100,000 commits. Build an index if search ever feels slow.
 pub fn search_commits(commits: &[Commit], query: &str) -> Vec<usize> {
@@ -2709,6 +2723,17 @@ mod tests {
             author_time: 0,
             summary: summary.into(),
         }
+    }
+
+    #[test]
+    fn file_and_change_searches_go_to_git() {
+        assert_eq!(git_search("fix the parser"), None);
+        assert_eq!(git_search("author:ada"), None);
+        assert_eq!(git_search("change:  "), Some(Vec::new()));
+        let change = git_search("change: --output=x").unwrap();
+        assert_eq!(&change[4..], ["-S--output=x", "--"]);
+        let file = git_search("file:src/main.rs").unwrap();
+        assert_eq!(&file[4..], ["--", "src/main.rs"]);
     }
 
     #[test]

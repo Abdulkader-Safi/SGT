@@ -307,7 +307,7 @@ detail:
   loading: "Loading…"
 
 search:
-  placeholder: "Search commits, author: or file:"
+  placeholder: "Search commits, author:, file: or change:"
   count: "%{at} of %{count}"
   none: "No commits match."
 

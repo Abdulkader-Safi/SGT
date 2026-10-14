@@ -3,9 +3,9 @@
 //! kit's theme, so its buttons, inputs and dialogs agree.
 
 use gpui_kit::component::ActiveTheme;
-use gpui_kit::{App, Hsla, rgb, rgba};
+use gpui_kit::{App, Global, Hsla, rgb, rgba};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Palette {
     pub bg_app: Hsla,
     pub bg_panel: Hsla,
@@ -97,9 +97,120 @@ impl Palette {
     }
 }
 
+impl Palette {
+    /// White text on black, for the high-contrast theme (FR-SET-03).
+    pub fn high_contrast() -> Self {
+        let c = |hex: u32| -> Hsla { rgb(hex).into() };
+        Self {
+            bg_app: c(0x000000),
+            bg_panel: c(0x0B0B0B),
+            bg_elevated: c(0x161616),
+            bg_sunken: c(0x000000),
+            bg_hover: c(0x242424),
+            bg_selected: c(0x0A2E66),
+            border: c(0x7A7A7A),
+            border_strong: c(0xB0B0B0),
+            text: c(0xFFFFFF),
+            text_secondary: c(0xE6E6E6),
+            text_tertiary: c(0xC4C4C4),
+            accent: c(0x7AB8FF),
+            accent_hover: c(0x9CCBFF),
+            accent_fill: c(0x0050C8),
+            accent_fill_hover: c(0x0044AA),
+            accent_subtle: c(0x0D2547),
+            success: c(0x5FE07A),
+            warning: c(0xFFD24D),
+            danger: c(0xFF7B72),
+            info: c(0x7AB8FF),
+            success_subtle: c(0x0B2614),
+            warning_subtle: c(0x2B2208),
+            danger_subtle: c(0x33100F),
+            diff_added: c(0x0B2614),
+            diff_added_gutter: c(0x15452A),
+            diff_removed: c(0x33100F),
+            diff_removed_gutter: c(0x5A1A18),
+            diff_hunk: c(0x0F1A2E),
+            diff_picked: c(0x1A3D7A),
+            ..Self::new(true)
+        }
+    }
+
+    /// The colour a user theme names, by token: `text`, `accent`,
+    /// `lane1` to `lane8`, and so on.
+    fn slot(&mut self, name: &str) -> Option<&mut Hsla> {
+        Some(match name {
+            "bg_app" => &mut self.bg_app,
+            "bg_panel" => &mut self.bg_panel,
+            "bg_elevated" => &mut self.bg_elevated,
+            "bg_sunken" => &mut self.bg_sunken,
+            "bg_hover" => &mut self.bg_hover,
+            "bg_selected" => &mut self.bg_selected,
+            "border" => &mut self.border,
+            "border_strong" => &mut self.border_strong,
+            "text" => &mut self.text,
+            "text_secondary" => &mut self.text_secondary,
+            "text_tertiary" => &mut self.text_tertiary,
+            "on_accent" => &mut self.on_accent,
+            "on_lane" => &mut self.on_lane,
+            "accent" => &mut self.accent,
+            "accent_hover" => &mut self.accent_hover,
+            "accent_fill" => &mut self.accent_fill,
+            "accent_fill_hover" => &mut self.accent_fill_hover,
+            "accent_subtle" => &mut self.accent_subtle,
+            "success" => &mut self.success,
+            "warning" => &mut self.warning,
+            "danger" => &mut self.danger,
+            "info" => &mut self.info,
+            "success_subtle" => &mut self.success_subtle,
+            "warning_subtle" => &mut self.warning_subtle,
+            "danger_subtle" => &mut self.danger_subtle,
+            "diff_added" => &mut self.diff_added,
+            "diff_added_gutter" => &mut self.diff_added_gutter,
+            "diff_removed" => &mut self.diff_removed,
+            "diff_removed_gutter" => &mut self.diff_removed_gutter,
+            "diff_hunk" => &mut self.diff_hunk,
+            "diff_picked" => &mut self.diff_picked,
+            "scrim" => &mut self.scrim,
+            lane => {
+                let n: usize = lane.strip_prefix("lane")?.parse().ok()?;
+                self.lanes.get_mut(n.checked_sub(1)?)?
+            }
+        })
+    }
+
+    /// This palette with a user theme's colours laid over it: an object
+    /// from token to `#rrggbb` or `#rrggbbaa`. Returns the entries it
+    /// could not use.
+    pub fn with_colors(
+        mut self,
+        colors: &serde_json::Map<String, serde_json::Value>,
+    ) -> (Self, Vec<String>) {
+        let mut skipped = Vec::new();
+        for (name, value) in colors {
+            let hex = value.as_str().and_then(|text| text.strip_prefix('#'));
+            let colour = hex.and_then(|hex| match hex.len() {
+                6 => u32::from_str_radix(hex, 16).ok().map(|v| rgb(v).into()),
+                8 => u32::from_str_radix(hex, 16).ok().map(|v| rgba(v).into()),
+                _ => None,
+            });
+            match (self.slot(name), colour) {
+                (Some(slot), Some(colour)) => *slot = colour,
+                _ => skipped.push(name.clone()),
+            }
+        }
+        (self, skipped)
+    }
+}
+
+/// The palette `theme::apply` chose, for every view to read.
+pub struct CurrentPalette(pub Palette);
+
+impl Global for CurrentPalette {}
+
 /// The palette for the current theme.
 pub fn palette(cx: &App) -> Palette {
-    Palette::new(cx.theme().is_dark())
+    cx.try_global::<CurrentPalette>()
+        .map_or_else(|| Palette::new(cx.theme().is_dark()), |current| current.0)
 }
 
 #[cfg(test)]
@@ -126,9 +237,25 @@ mod tests {
 
     /// NFR-06: text is at least 4.5:1 against what it sits on.
     #[test]
-    fn text_meets_the_contrast_rule_in_both_themes() {
-        for dark in [true, false] {
-            let p = Palette::new(dark);
+    fn a_user_theme_sets_named_colours_and_skips_the_rest() {
+        let colors = serde_json::json!({
+            "accent": "#FF8800", "lane3": "#00000080", "nope": "#FFFFFF", "text": "red"
+        });
+        let (p, skipped) = Palette::new(true).with_colors(colors.as_object().unwrap());
+        assert_eq!(p.accent, rgb(0xFF8800).into());
+        assert_eq!(p.lanes[2], rgba(0x00000080).into());
+        assert_eq!(skipped, ["nope", "text"]);
+        assert_eq!(p.text, Palette::new(true).text);
+    }
+
+    #[test]
+    fn text_meets_the_contrast_rule_in_every_theme() {
+        let themes = [
+            ("dark", Palette::new(true)),
+            ("light", Palette::new(false)),
+            ("high contrast", Palette::high_contrast()),
+        ];
+        for (dark, p) in themes {
             let surfaces = [
                 p.bg_app,
                 p.bg_panel,

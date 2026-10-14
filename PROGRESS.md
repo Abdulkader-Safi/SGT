@@ -20,7 +20,7 @@ Renamed on 2026-10-13 from the working name "GitTree" to "Safi Git Tree" (SGT). 
 | M7: undo, palette, keyboard | Built, 121 tests pass. The keyboard-only walkthrough needs doing by hand |
 | M8: hardening and packaging | Built, 141 tests pass. The bench rerun and three checks by eye are still to do, see below |
 | M9: history tools | Built: interactive rebase, conflict prediction, the reflog, compare, changed-word marks and the whitespace toggle. Blame and file history came with M12. 161 tests pass. Waits on checks by eye |
-| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity, completion toasts, `change:` search, hiding branches, the signing error, the Insert menu and `keymap.json` are built. Still to do: high-contrast and user themes, and repository tabs. Zoom is on hold, see below |
+| M10: comfort | Started: background fetch, ignoring files, setting an upstream, a branch from a stash, the activity log, the identity, completion toasts, `change:` search, hiding branches, the signing error, the Insert menu, `keymap.json`, and high-contrast and user themes are built. Still to do: repository tabs. Zoom is on hold, see below |
 | M11: MCP server | Built: the server with eight tools, the Settings page, the list of agent calls and the approval banner. Not yet tried with a real client asking for approval, or looked at on screen. See below |
 | M12: blame, file history, worktrees, agent sessions | Built, 154 tests pass. Not yet run with a real agent or looked at on screen, see below |
 | M13: AI helpers and Launchpad | Built: commit messages, commit explanations, conflict suggestions, the commit composer and the Launchpad. 148 tests pass (counted as test functions; the higher numbers in the rows above were miscounted). Not yet run with a real agent on a plan or looked at on screen |
@@ -641,6 +641,13 @@ Still needs a check by eye: the dialog with many commits, and a reword with a lo
 - It is read with the other files off the UI thread at startup, and its bindings come after the defaults, so a key in both runs the user's command.
 - An entry that names no command, or has keys GPUI cannot read, is skipped and logged.
 - A binding is added, not swapped: the default keys still work, and the palette and menus show the default keys. A change needs a restart.
+
+### High-contrast and user themes (built)
+
+- Settings, Appearance: the theme choice gains "High contrast": white text on black, stronger borders and brighter colours. The contrast test checks it like the other two.
+- "Custom colours" names a JSON file in the `themes` folder of the app's data folder, without `.json`. Its colours go over the chosen theme: an object from a palette token (`accent`, `text`, `bg_panel`, `lane1` to `lane8`, ...) to `#rrggbb` or `#rrggbbaa`. A token it does not know, or a colour it cannot read, is skipped.
+- Theme files are read with the other files at startup. A file that is not JSON is skipped and logged. A new file needs a restart. A user theme is not checked for contrast.
+- The palette is now a global that `theme::apply` sets, so every view reads the chosen one.
 
 ### Zoom (on hold)
 

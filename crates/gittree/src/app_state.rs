@@ -18,6 +18,8 @@ pub struct Loaded {
     pub trust: TrustList,
     /// The text of `keymap.json`, empty when there is none.
     pub keymap: String,
+    /// Each `themes/*.json`: its name and its colours.
+    pub themes: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
 }
 
 impl Loaded {
@@ -29,9 +31,38 @@ impl Loaded {
             recent: store.load(),
             trust: store.load(),
             keymap: std::fs::read_to_string(store.dir().join("keymap.json")).unwrap_or_default(),
+            themes: read_themes(&store.dir().join("themes")),
             store,
         }
     }
+}
+
+/// The user themes in `folder`, by file name. A file that is not a JSON
+/// object is skipped and logged.
+fn read_themes(
+    folder: &std::path::Path,
+) -> Vec<(String, serde_json::Map<String, serde_json::Value>)> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut themes: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_stem()?.to_string_lossy().into_owned();
+            (path.extension()? == "json").then_some(())?;
+            let text = std::fs::read_to_string(&path).ok()?;
+            match serde_json::from_str(&text) {
+                Ok(colors) => Some((name, colors)),
+                Err(error) => {
+                    tracing::warn!(%error, theme = %name, "theme is not a JSON object");
+                    None
+                }
+            }
+        })
+        .collect();
+    themes.sort_by(|a, b| a.0.cmp(&b.0));
+    themes
 }
 
 pub enum GitCheck {
@@ -76,6 +107,8 @@ pub struct AppState {
     pub session: Session,
     pub recent: Recent,
     pub trust: TrustList,
+    /// The user themes found at startup.
+    pub themes: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
     pub git: GitCheck,
     pub repo: Option<Entity<RepoState>>,
     pub clone: Option<CloneJob>,
@@ -106,6 +139,7 @@ impl AppState {
             session,
             recent,
             trust,
+            themes,
             ..
         } = loaded;
 
@@ -136,6 +170,7 @@ impl AppState {
             session,
             recent,
             trust,
+            themes,
             git: GitCheck::Checking,
             repo: None,
             clone: None,

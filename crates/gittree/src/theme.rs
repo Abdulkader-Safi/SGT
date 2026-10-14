@@ -3,25 +3,40 @@ use gpui_kit::component::{ActiveTheme, Theme, ThemeMode};
 use gpui_kit::{App, px};
 
 use crate::app_state::app_state;
-use crate::palette::Palette;
+use crate::palette::{CurrentPalette, Palette};
 
 /// Makes the kit's theme match the settings and the design's colours.
 /// "System" follows macOS. Safe to call often: it only touches the theme
 /// when something differs.
 pub fn apply(cx: &mut App) {
-    let settings = &app_state(cx).read(cx).settings;
+    let app = app_state(cx).read(cx);
+    let settings = &app.settings;
     let mode = match settings.theme {
         ThemeChoice::System => ThemeMode::from(cx.window_appearance()),
         ThemeChoice::Light => ThemeMode::Light,
-        ThemeChoice::Dark => ThemeMode::Dark,
+        ThemeChoice::Dark | ThemeChoice::HighContrast => ThemeMode::Dark,
     };
     let font_size = px(settings.ui_font_size);
+    let mut p = match settings.theme {
+        ThemeChoice::HighContrast => Palette::high_contrast(),
+        _ => Palette::new(mode.is_dark()),
+    };
+    // A user theme's colours go over the chosen one (FR-SET-03).
+    let custom = settings.custom_theme.trim();
+    if let Some((_, colors)) = app.themes.iter().find(|(name, _)| name == custom) {
+        p = p.with_colors(colors).0;
+    }
     if cx.theme().mode != mode {
         // Loading a mode replaces the colours, so they go in afterwards.
         Theme::change(mode, None, cx);
     }
-    let p = Palette::new(mode.is_dark());
-    if cx.theme().font_size != font_size || cx.theme().background != p.bg_app {
+    let changed = cx
+        .try_global::<CurrentPalette>()
+        .is_none_or(|current| current.0 != p);
+    if changed {
+        cx.set_global(CurrentPalette(p));
+    }
+    if changed || cx.theme().font_size != font_size || cx.theme().background != p.bg_app {
         Theme::update(cx, |theme| {
             theme.font_size = font_size;
             theme.radius = px(6.);

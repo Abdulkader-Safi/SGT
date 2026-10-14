@@ -116,11 +116,19 @@ impl Render for SettingsView {
                         (ThemeChoice::System, "settings.theme_system"),
                         (ThemeChoice::Light, "settings.theme_light"),
                         (ThemeChoice::Dark, "settings.theme_dark"),
+                        (ThemeChoice::HighContrast, "settings.theme_high_contrast"),
                     ],
                     |s| s.theme,
                     |s, v| s.theme = v,
                 ),
             ))
+            .item(
+                SettingItem::new(
+                    label("settings.custom_theme"),
+                    text(|s| s.custom_theme.clone(), |s, v| s.custom_theme = v),
+                )
+                .description(label("settings.custom_theme_help")),
+            )
             .item(SettingItem::new(
                 label("settings.ui_font_size"),
                 number(|s| s.ui_font_size, |s, v| s.ui_font_size = v),

@@ -1730,6 +1730,39 @@ fn keymap_json_adds_a_binding(cx: &mut TestAppContext) {
     assert_eq!(after, before + 1);
 }
 
+/// FR-SET-03: the high-contrast theme, with a user theme's colours over it.
+#[gpui_kit::test]
+fn high_contrast_and_a_user_theme_set_the_palette(cx: &mut TestAppContext) {
+    use gittree::palette::{Palette, palette};
+
+    let data = tempfile::tempdir().unwrap();
+    std::fs::create_dir(data.path().join("themes")).unwrap();
+    std::fs::write(
+        data.path().join("themes/acid.json"),
+        r##"{"accent": "#00FF00"}"##,
+    )
+    .unwrap();
+    std::fs::write(data.path().join("themes/broken.json"), "not json").unwrap();
+    let shell = launch(data.path(), None, cx);
+    cx.update(|cx| {
+        shell.app.update(cx, |app, cx| {
+            app.update_settings(
+                |settings| {
+                    settings.theme = gittree_core::store::ThemeChoice::HighContrast;
+                    settings.custom_theme = "acid".into();
+                },
+                cx,
+            )
+        });
+        gittree::theme::apply(cx);
+        let p = palette(cx);
+        assert_eq!(p.bg_app, Palette::high_contrast().bg_app);
+        assert_eq!(p.accent, gpui_kit::rgb(0x00FF00).into());
+        assert_eq!(shell.app.read(cx).themes.len(), 1);
+    });
+    shell.in_window(cx, |_, _| ());
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

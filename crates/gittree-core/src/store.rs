@@ -97,6 +97,8 @@ pub enum ThemeChoice {
     System,
     Light,
     Dark,
+    /// White on black, with stronger borders and colours.
+    HighContrast,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -139,6 +141,9 @@ pub struct Settings {
     /// commits, and the command when it is `Other`.
     pub ai_agent: crate::agent::AgentKind,
     pub ai_command: String,
+    /// A file in the `themes` folder whose colours are laid over the
+    /// theme, without `.json`. Empty for none.
+    pub custom_theme: String,
 }
 
 /// What the MCP server lets an agent do.
@@ -172,6 +177,7 @@ impl Default for Settings {
             mcp_ask: false,
             ai_agent: crate::agent::AgentKind::Claude,
             ai_command: String::new(),
+            custom_theme: String::new(),
         }
     }
 }

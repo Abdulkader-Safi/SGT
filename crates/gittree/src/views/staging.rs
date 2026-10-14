@@ -4,6 +4,7 @@ use gittree_core::model::{RepoPath, StatusEntry};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
@@ -430,7 +431,9 @@ impl StagingView {
                         .group_hover("file-row", |style| style.visible())
                 }
             };
-            h_flex()
+            let untracked = !staged && entry.worktree == gittree_core::model::Change::Untracked;
+            let ignore_menu = untracked.then(|| ignore_menu(self.repo.clone(), entry.path.clone()));
+            let row = h_flex()
                 .id((if staged { "staged" } else { "unstaged" }, ix))
                 .group("file-row")
                 .h(px(28.))
@@ -497,7 +500,11 @@ impl StagingView {
                                 })),
                         ),
                     )
-                })
+                });
+            match ignore_menu {
+                Some(menu) => row.context_menu(menu).into_any_element(),
+                None => row.into_any_element(),
+            }
         });
 
         v_flex().flex_none().child(header).child(
@@ -511,6 +518,51 @@ impl StagingView {
                 .children(rows)
                 .overflow_y_scrollbar(),
         )
+    }
+}
+
+/// The right-click menu of an untracked file: ignore it, every file with
+/// its extension, or its folder (FR-STAGE-09).
+fn ignore_menu(
+    repo: Entity<RepoState>,
+    path: RepoPath,
+) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    use gittree_core::ops::stage::ignore_pattern;
+
+    move |menu, _, cx| {
+        let can = repo.read(cx).repository.trusted && !repo.read(cx).busy;
+        let text = path.to_string();
+        let mut choices = vec![(
+            t!("staging.ignore_file").into_owned(),
+            ignore_pattern(&path),
+        )];
+        let name = text.rsplit('/').next().unwrap_or(&text);
+        if let Some((stem, extension)) = name.rsplit_once('.')
+            && !stem.is_empty()
+            && !extension.contains(['*', '?', '[', '\\'])
+        {
+            choices.push((
+                t!("staging.ignore_extension", extension = extension).into_owned(),
+                format!("*.{extension}"),
+            ));
+        }
+        if let Some((folder, _)) = text.rsplit_once('/') {
+            choices.push((
+                t!("staging.ignore_folder", folder = folder).into_owned(),
+                format!("{}/", ignore_pattern(&folder.into())),
+            ));
+        }
+        choices.into_iter().fold(menu, |menu, (label, pattern)| {
+            let repo = repo.clone();
+            menu.item(
+                PopupMenuItem::new(label)
+                    .disabled(!can)
+                    .on_click(move |_, _, cx| {
+                        let op = Op::Ignore(pattern.clone());
+                        repo.update(cx, |repo, cx| repo.run_op(op, cx))
+                    }),
+            )
+        })
     }
 }
 

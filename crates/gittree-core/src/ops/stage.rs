@@ -120,3 +120,51 @@ pub fn commit(runner: &GitRunner, message: &str, amend: bool) -> Result<Oid, Git
     let oid = runner.read(["rev-parse", "HEAD"])?;
     Ok(String::from_utf8_lossy(&oid).trim_end().into())
 }
+
+/// A `.gitignore` line that matches exactly this path from the top of the
+/// working tree. Characters Git reads as wildcards are escaped.
+pub fn ignore_pattern(path: &RepoPath) -> String {
+    let mut pattern = String::from("/");
+    for c in path.to_string().chars() {
+        if matches!(c, '*' | '?' | '[' | '\\' | '!' | '#') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    // A trailing space is dropped by Git unless it is escaped.
+    if pattern.ends_with(' ') {
+        pattern.pop();
+        pattern.push_str("\\ ");
+    }
+    pattern
+}
+
+/// Adds a line to the `.gitignore` at the top of the working tree, making
+/// the file if there is none (FR-STAGE-09). Refused when not trusted.
+pub fn add_ignore(runner: &GitRunner, pattern: &str) -> Result<(), GitError> {
+    use std::io::Write;
+
+    let fail = |error: std::io::Error| GitError {
+        kind: crate::error::GitErrorKind::Other,
+        args: Vec::new(),
+        exit_code: None,
+        stderr: format!("Could not change .gitignore: {error}"),
+    };
+    if !runner.trusted() {
+        return Err(GitError::untrusted());
+    }
+    let file = runner.dir().join(".gitignore");
+    let before = std::fs::read(&file).unwrap_or_default();
+    let mut out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+        .map_err(fail)?;
+    // The new line must not join the last one.
+    let gap = if before.is_empty() || before.ends_with(b"\n") {
+        ""
+    } else {
+        "\n"
+    };
+    writeln!(out, "{gap}{pattern}").map_err(fail)
+}

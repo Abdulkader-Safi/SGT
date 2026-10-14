@@ -1475,6 +1475,62 @@ fn the_rebase_plan_reorders_and_drops_commits(cx: &mut TestAppContext) {
     assert!(undo.is_some_and(|label| label.starts_with("Edit commits after")));
 }
 
+/// FR-STAGE-09: an untracked file has a right-click menu, and ignoring it
+/// takes it out of the changes.
+#[gpui_kit::test]
+fn an_untracked_file_can_be_ignored(cx: &mut TestAppContext) {
+    use gittree::repo_state::{Op, Scope};
+
+    let data = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    isolate_git();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    std::fs::write(dir.path().join("debug.log"), "noise").unwrap();
+
+    let shell = launch(data.path(), Some(dir.path().to_owned()), cx);
+    shell.in_window(cx, |window, cx| window.click("trust", cx));
+    let repo = cx.update(|cx| shell.app.read(cx).repo.clone().unwrap());
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.select_wip(cx)));
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.refresh(Scope::Status, cx)));
+    cx.run_until_parked();
+    // The menu opens on the untracked row.
+    shell.in_window(cx, |window, cx| window.right_click(("stage", 0usize), cx));
+    shell.in_window(cx, |_, _| ());
+
+    cx.update(|cx| repo.update(cx, |repo, cx| repo.run_op(Op::Ignore("*.log".into()), cx)));
+    for _ in 0..200 {
+        cx.run_until_parked();
+        let done = cx.update(|cx| {
+            let repo = repo.read(cx);
+            !repo.busy
+                && !repo
+                    .status
+                    .iter()
+                    .any(|e| e.path.to_string() == "debug.log")
+        });
+        if done {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "*.log\n"
+    );
+    cx.update(|cx| {
+        let paths: Vec<String> = repo
+            .read(cx)
+            .status
+            .iter()
+            .map(|e| e.path.to_string())
+            .collect();
+        assert_eq!(paths, [".gitignore"]);
+    });
+}
+
 /// FR-AGENT-06: the Launchpad reads pull requests through `gh`, and a new
 /// pull request is opened after the branch is pushed. A stand-in script
 /// plays `gh`.

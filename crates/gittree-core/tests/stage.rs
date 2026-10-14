@@ -493,3 +493,24 @@ fn an_untrusted_repository_refuses_every_change() {
         " M a.txt\n?? new.txt"
     );
 }
+
+#[test]
+fn a_file_or_a_pattern_is_added_to_gitignore() {
+    let repo = TestRepo::new();
+    repo.write("build/out.log", b"log\n");
+    repo.write("a[1].tmp", b"x\n");
+    repo.write(".gitignore", b"target");
+    let runner = repo.runner(true);
+
+    let exact = stage::ignore_pattern(&"a[1].tmp".into());
+    assert_eq!(exact, "/a\\[1].tmp");
+    stage::add_ignore(&runner, &exact).unwrap();
+    stage::add_ignore(&runner, "*.log").unwrap();
+    assert_eq!(repo.read(".gitignore"), b"target\n/a\\[1].tmp\n*.log\n");
+    // Git agrees: both files are now ignored.
+    let left = repo.git(1, &["status", "--porcelain", "--untracked-files=all"]);
+    assert_eq!(left, "?? .gitignore");
+
+    assert!(stage::add_ignore(&repo.runner(false), "x").is_err());
+    assert_eq!(stage::ignore_pattern(&"#notes ".into()), "/\\#notes\\ ");
+}

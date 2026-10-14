@@ -72,6 +72,8 @@ pub enum RepoEvent {
 #[derive(Debug, Clone)]
 pub enum Op {
     Stage(Vec<RepoPath>),
+    /// Adds a line to the top `.gitignore`.
+    Ignore(String),
     Unstage(Vec<RepoPath>),
     /// Stages, unstages or discards the chosen lines of a diff.
     Apply {
@@ -2057,6 +2059,7 @@ fn op_label(op: &Op) -> String {
             t!("journal.reset", target = &target[..7.min(target.len())]).into_owned()
         }
         Op::Stage(_)
+        | Op::Ignore(_)
         | Op::Unstage(_)
         // Each of its commits gets a label of its own.
         | Op::CommitPlan { .. }
@@ -2135,6 +2138,7 @@ fn execute(
     };
     match op {
         Op::Stage(paths) => stage::stage(runner, &paths).map(|()| Done::Changed),
+        Op::Ignore(pattern) => stage::add_ignore(runner, &pattern).map(|()| Done::Changed),
         Op::Unstage(paths) => stage::unstage(runner, &paths, has_commits).map(|()| Done::Changed),
         Op::Apply {
             diff,

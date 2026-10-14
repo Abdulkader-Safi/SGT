@@ -312,6 +312,9 @@ search:
   none: "No commits match."
 
 staging:
+  ignore_file: "Ignore this file"
+  ignore_extension: "Ignore all .%{extension} files"
+  ignore_folder: "Ignore the folder %{folder}"
   unstaged: "Unstaged · %{count}"
   staged: "Staged · %{count}"
   nothing_staged: "Nothing staged yet. Stage files, hunks or lines to commit them."
